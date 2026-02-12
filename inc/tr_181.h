@@ -26,6 +26,8 @@
 #include <cjson/cJSON.h>
 #include <unistd.h>
 
+typedef std::string string_t;
+
 #define DEVICE_WIFI_DATAELEMENTS_NETWORK_COLOCATEDAGENTID   "Device.WiFi.DataElements.Network.ColocatedAgentID"
 #define DEVICE_WIFI_DATAELEMENTS_NETWORK_CONTROLLERID       "Device.WiFi.DataElements.Network.ControllerID"
 //#define DEVICE_WIFI_DATAELEMENTS_NETWORK_SETSSID_CMD "Device.WiFi.DataElements.Network.SetSSID()"
@@ -62,6 +64,21 @@ static const yang_to_tr181_map g_yang_map[] = {
 
     { nullptr, nullptr } // Default case
 };
+
+typedef struct ssid_config {
+    string_t ssid; // For Fronthaul use for wifi multi-AP network.
+    bool enable; // for enabling and disabling SSID.
+    string_t AddRemoveChange; // Mandatory: Add / Remove / Change.
+    string_t passphrase; // For Fronthaul use for wifi multi-AP network, passphrase for the SSID.
+    string_t band; //Comma-separated list of 2.4GHz/5GHz/6GHz entries.
+    string_t akms; //Comma-separated list of AKM entries:psk,dpp,sae,psk+sae,dpp+sae,dpp+psk+sae,suiteselector.
+    string_t SuiteSelector; // 4-octet hex value (no delimiters) when AKMsAllowed includes SuiteSelector.
+    bool AdvertisementEnabled; //Indicates if the SSID is being advertised in beacons or not.
+    string_t MFPConfig; //Management Frame Protection configuration: Disabled, Optional, Required.
+    string_t MobilityDomain; // Comma-separated list of MAC addresses (17-char each) for the 802.11 mobility domain.
+    string_t HaulType; // Comma-separated list of Fronthaul/Backhaul entries.
+    string_t Status; // Request outcome: Success, Error_Invalid_Input, Error_Timeout, Error_Other.
+} ssid_config;
 
 #define DATAELEMS_NETWORK       "Device.WiFi.DataElements.Network."
 
@@ -447,7 +464,6 @@ class dm_easy_mesh_ctrl_t;
 class tr_181_t {
 private:
     bus_handle_t m_bus_handle;
-    static const bus_data_cb_func_t* get_bus_data_set_cb(size_t &count);
 
 public:
 

@@ -1080,7 +1080,7 @@ void em_ctrl_t::start_complete()
             { NULL, NULL , NULL, NULL, NULL, NULL }, slow_speed, ZERO_TABLE,
             { bus_data_type_string, false, 0, 0, 0, NULL } },
         { DEVICE_WIFI_DATAELEMENTS_NETWORK_SETSSID_CMD, bus_element_type_method,
-            { tr_181_t::ssid_get, NULL, NULL, NULL, NULL, tr_181_t::cmd_setssid }, slow_speed, ZERO_TABLE,
+            { NULL, NULL, NULL, NULL, NULL, tr_181_t::cmd_setssid }, slow_speed, ZERO_TABLE,
             { bus_data_type_string, false, 0, 0, 0, NULL } },
 	};
 

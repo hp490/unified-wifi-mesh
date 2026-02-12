@@ -64,7 +64,7 @@ void tr_181_t::init(void* ptr)
 
 int tr_181_t::wfa_set_bus_callbackfunc_pointers(const char *full_namespace, bus_callback_table_t *cb_table)
 {
-    bus_data_cb_func_t bus_data_get_cb[] = {
+    bus_data_cb_func_t bus_data_cb[] = {
         ELEMENT(DE_NETWORK_ID,            CALLBACK_GETTER(network_get)),
         ELEMENT(DE_NETWORK_CTRLID,        CALLBACK_GETTER(network_get)),
         ELEMENT(DE_NETWORK_COLAGTID,      CALLBACK_GETTER(network_get)),
@@ -259,7 +259,8 @@ int tr_181_t::wfa_set_bus_callbackfunc_pointers(const char *full_namespace, bus_
 
         ELEMENT(DEVICE_WIFI_DATAELEMENTS_NETWORK_TOPOLOGY,              CALLBACK_GETTER(NULL)),
         ELEMENT(DEVICE_WIFI_DATAELEMENTS_NETWORK_NODE_SYNC,             CALLBACK_GETTER(get_node_sync)),
-        //ELEMENT(DEVICE_WIFI_DATAELEMENTS_NETWORK_NODE_CFG_POLICY,       CB(.set_handler = policy_config))
+        ELEMENT(DEVICE_WIFI_DATAELEMENTS_NETWORK_NODE_CFG_POLICY,       CB(.set_handler = policy_config))
+        //ELEMENT(DEVICE_WIFI_DATAELEMENTS_NETWORK_SETSSID_CMD,       CALLBACK_METHOD(em_ctrl_t::cmd_setssid))
     };
 
     bus_data_cb_func_t bus_default_data_cb = { const_cast<char*>(" "),
@@ -268,40 +269,18 @@ int tr_181_t::wfa_set_bus_callbackfunc_pointers(const char *full_namespace, bus_
     };
 
     uint32_t index = 0;
-    bool     table_found = false;
-    bus_callback_table_t selected = {};
-    size_t set_count = 0;
-    const bus_data_cb_func_t *bus_data_set_cb = get_bus_data_set_cb(set_count);
-
-    for (index = 0; index < static_cast<uint32_t>(ARRAY_SIZE(bus_data_get_cb)); index++) {
-        if (strcmp(full_namespace, bus_data_get_cb[index].cb_table_name) == 0) {
-            memcpy(&selected, &bus_data_get_cb[index].cb_func, sizeof(bus_callback_table_t));
+    bool table_found = false;
+    for (index = 0; index < static_cast<uint32_t>(ARRAY_SIZE(bus_data_cb)); index++) {
+        if (strcmp(full_namespace, bus_data_cb[index].cb_table_name) == 0) {
+            memcpy(cb_table, &bus_data_cb[index].cb_func, sizeof(bus_callback_table_t));
             table_found = true;
             break;
         }
     }
 
-    if (bus_data_set_cb != NULL) {
-        for (index = 0; index < static_cast<uint32_t>(set_count); index++) {
-            if (strcmp(full_namespace, bus_data_set_cb[index].cb_table_name) == 0) {
-                if (bus_data_set_cb[index].cb_func.set_handler != NULL) {
-                    selected.set_handler = bus_data_set_cb[index].cb_func.set_handler;
-                }
-                if (bus_data_set_cb[index].cb_func.method_handler != NULL) {
-                    selected.method_handler = bus_data_set_cb[index].cb_func.method_handler;
-                }
-                table_found = true;
-                break;
-            }
-        }
-    }
-
     if (table_found == false) {
-        memcpy(&selected, &bus_default_data_cb.cb_func, sizeof(bus_callback_table_t));
+        memcpy(cb_table, &bus_default_data_cb.cb_func, sizeof(bus_callback_table_t));
     }
-
-    memcpy(cb_table, &selected, sizeof(bus_callback_table_t));
-
     return RETURN_OK;
 }
 
@@ -528,6 +507,17 @@ bus_error_t tr_181_t::ssid_get(char *event_name, raw_data_t *p_data, bus_user_da
         return em_ctrl->get_dm_ctrl()->ssid_get(event_name, p_data);
     }
     
+    return bus_error_general;
+}
+
+bus_error_t tr_181_t::cmd_setssid(const char *method_name, raw_data_t *in_params, raw_data_t *out_params, void *async_handle)
+{
+    em_ctrl_t *em_ctrl = em_ctrl_t::get_em_ctrl_instance();
+
+    if (em_ctrl != NULL) {
+        return em_ctrl->cmd_setssid(method_name, in_params, out_params, async_handle);
+    }
+
     return bus_error_general;
 }
 
@@ -1178,6 +1168,5 @@ int tr_181_t::register_wfa_dml()
 {
     const char *filename = "Data_Elements_JSON_Schema_v3.0.json";
     parse_and_register_schema(filename);
-
     return RETURN_OK;
 }
