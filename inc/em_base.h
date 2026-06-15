@@ -105,6 +105,7 @@ extern "C"
 #define EM_MAX_CLIENT_ASSOC_CTRL_REQ_TX_THRESH  5
 #define MAX_STA_TO_DISASSOC		32
 #define EM_MAX_DB_CFG_CRITERIA	32
+#define MAX_STA_LIST 30
 
 #define EM_CLI_MAX_ARGS 5
 
@@ -926,8 +927,8 @@ typedef struct {
     bssid_t 	bssid;
     unsigned char assoc_control;
     unsigned short validity_period;
-    unsigned char count;
-    mac_address_t sta_mac;
+    unsigned char sta_count;
+    mac_address_t sta_list[MAX_STA_LIST];
 }__attribute__((__packed__)) em_client_assoc_ctrl_req_t;
 
 typedef struct {
@@ -2165,6 +2166,7 @@ typedef enum {
     em_state_ctrl_avail_spectrum_inquiry_pending,
     em_state_ctrl_bsta_cap_pending,
     em_state_ctrl_topo_publish_pending,
+    em_state_ctrl_client_assoc_ctrl_req_pending,
 
     em_state_max,
 } em_state_t;
@@ -2217,6 +2219,8 @@ typedef enum {
     em_cmd_type_get_reset,
     em_cmd_type_bsta_cap,
     em_cmd_type_get_link_quality_report,
+    em_cmd_type_set_bh_cfg,
+    em_cmd_type_client_assoc_ctrl_req,
 
     em_cmd_type_max,
 } em_cmd_type_t;
@@ -2345,6 +2349,7 @@ typedef struct {
     em_small_string_t    primary_device_type;
     em_small_string_t    secondary_device_type;
     ieee_1905_security_t    sec_1905;
+    bool    m8_bsta_reconfiguration;
 } em_device_info_t;
 
 typedef struct {
@@ -2911,6 +2916,7 @@ typedef enum {
     em_bus_event_type_recv_csa_beacon_frame,
     em_bus_event_type_bsta_cap_req,
     em_bus_event_type_link_quality_report,
+    em_bus_event_type_set_bh_cfg,
     em_bus_event_type_client_assoc_ctrl_req,
 
     em_bus_event_type_max
@@ -3001,7 +3007,8 @@ typedef enum {
     dm_orch_type_mld_reconfig,
     dm_orch_type_beacon_report,
     dm_orch_type_bsta_cap_query,
-    dm_orch_type_link_quality_report
+    dm_orch_type_link_quality_report,
+    dm_orch_type_client_assoc
 } dm_orch_type_t;
 
 typedef struct {
@@ -3053,6 +3060,7 @@ typedef struct{
 	em_haul_type_t haultype[EM_MAX_BSS_PER_RADIO];
 	mac_address_t radio_mac[EM_MAX_BSS_PER_RADIO];
     em_4xlong_string_t dpp_connector[EM_MAX_BSS_PER_RADIO];
+	bool is_bh_reconfig;
 } m2ctrl_radioconfig;
 
 typedef struct{
@@ -3126,6 +3134,14 @@ typedef struct {
 } em_cmd_btm_report_params_t;
 
 typedef struct {
+    bssid_t 	bssid;
+    unsigned char assoc_control;
+    unsigned short validity_period;
+    unsigned char sta_count;
+    mac_address_t sta_list[MAX_STA_LIST];
+}em_cmd_client_assoc_params_t;
+
+typedef struct {
     mac_address_t	sta_mac;
     bssid_t	bssid;
     unsigned int disassoc_time;
@@ -3184,6 +3200,7 @@ typedef struct {
         em_cmd_steer_params_t	steer_params;
         em_cmd_btm_report_params_t  btm_report_params;
         em_cmd_disassoc_params_t	disassoc_params;
+        em_cmd_client_assoc_params_t   client_assoc_params;
 		em_cmd_scan_params_t	scan_params;
         em_cmd_ap_metrics_rprt_params_t ap_metrics_params;
     } u;

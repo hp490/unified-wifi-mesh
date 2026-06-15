@@ -1568,7 +1568,7 @@ dm_easy_mesh_t *dm_easy_mesh_list_t::create_data_model(const char *net_id, const
 	const em_policy_t	em_policy[] = {
 						{{"OneWifiMesh", {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
 							em_policy_id_type_ap_metrics_rep}, 0, {}, em_steering_policy_type_disallowed,
-							0, 0, 5, 0, false, false, false, "", false, {}, false, false, false, 0, {0, 0},
+							0, 0, 0, 0, false, false, false, "", false, {}, false, false, false, 0, {0, 0},
                             {0, {{0, "", 0}, {0, "", 0}, {0, "", 0}, {0, "", 0}, {0, "", 0}}}, {}, {}, {}, {}, {}, {}},
 						{{"OneWifiMesh", {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
 							em_policy_id_type_steering_local}, 1, {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},

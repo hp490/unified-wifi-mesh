@@ -43,6 +43,7 @@
 #include "em_cmd_dev_test.h"
 #include "em_cmd_remove_device.h"
 #include "em_cmd_set_ssid.h"
+#include "em_cmd_set_bh_cfg.h"
 #include "em_cmd_set_channel.h"
 #include "em_cmd_scan_channel.h"
 #include "em_cmd_set_radio.h"
@@ -57,6 +58,7 @@
 #include "em_cmd_get_mld_config.h"
 #include "em_cmd_mld_reconfig.h"
 #include "em_cmd_bsta_cap.h"
+#include "em_cmd_client_assoc_ctrl_req.h"
 
 extern em_network_topo_t *g_network_topology;
 
@@ -152,7 +154,12 @@ bus_error_t em_ctrl_t::cmd_setssid(const char *method_name, const bus_data_prop_
     // Add new JSON as child of root and update subdoc buffer.
     json = new_json;
     new_json = NULL;
-    cJSON_AddItemToObject(root, "wfa-dataelements:SetSSID", json);
+
+    // Determine if this is a backhaul SSID/passphrase change
+    bool is_backhaul_change = (HaulType[0] && strcmp(HaulType, "Backhaul") == 0);
+    em_printfout("Received set_ssid request: SSID=%s AddRemoveChange=%s PassPhrase=%s Band=%s HaulType=%s\n", ssid, addremove, passphrase, band, HaulType);
+    const char *json_key = is_backhaul_change ? "wfa-dataelements:SetBhCfg" : "wfa-dataelements:SetSSID";
+    cJSON_AddItemToObject(root, json_key, json);
 
     ssid_list = cJSON_GetObjectItem(json, "NetworkSSIDList");
     if (!ssid_list || !cJSON_IsArray(ssid_list)) {
@@ -217,6 +224,7 @@ bus_error_t em_ctrl_t::cmd_setssid(const char *method_name, const bus_data_prop_
                     if (output_params) *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
                     return bus_error_out_of_resources;
                 }
+
                 cJSON_ReplaceItemInObject(target, "SSID", ssid_item_new);
             }
             if (passphrase[0]) {
@@ -338,7 +346,8 @@ bus_error_t em_ctrl_t::cmd_setssid(const char *method_name, const bus_data_prop_
     }
     */
 
-    em_ctrl->io_process(em_bus_event_type_set_ssid, subdoc->buff, json_len);
+    em_ctrl->io_process(is_backhaul_change ? em_bus_event_type_set_bh_cfg : em_bus_event_type_set_ssid,
+                         subdoc->buff, json_len);
     free(updated_json);
     cJSON_Delete(root);
 
@@ -1969,6 +1978,116 @@ int dm_easy_mesh_ctrl_t::analyze_command_steer(em_bus_event_t *evt, em_cmd_t *cm
     return num;
 }
 
+int dm_easy_mesh_ctrl_t::analyze_client_assoc(em_bus_event_t *evt, em_cmd_t *pcmd[])
+{
+    cJSON *obj, *wfa_obj;
+    cJSON *sta_list_obj, *bssid_obj, *validity_period_obj, *assoc_control_obj;
+    int num = 0;
+    em_cmd_t *tmp = NULL;
+    em_subdoc_info_t *subdoc;
+    em_long_string_t wfa;
+    em_cmd_client_assoc_params_t assoc_param;
+    dm_easy_mesh_t dm = *this;
+
+    subdoc = &evt->u.subdoc;
+    obj = cJSON_Parse(subdoc->buff);
+    if (obj == NULL) {
+        em_printfout("%s:%d: Failed to parse: %s", __func__, __LINE__, subdoc->buff);
+        return 0;
+    }
+
+    snprintf(wfa, sizeof(wfa), "wfa-dataelements:ClientAssocCtrlRequest");
+
+    if ((wfa_obj = cJSON_GetObjectItem(obj, wfa)) == NULL) {
+        em_printfout("%s:%d: Failed to get ClientAssocCtrlRequest object", __func__, __LINE__);
+        cJSON_Delete(obj);
+        return 0;
+    }
+
+    memset(&assoc_param, 0, sizeof(em_cmd_client_assoc_params_t));
+
+    if ((bssid_obj = cJSON_GetObjectItem(wfa_obj, "Bssid")) == NULL) {
+        em_printfout("%s:%d: Failed to get Bssid", __func__, __LINE__);
+        cJSON_Delete(obj);
+        return 0;
+    }
+    const char *bssid_str = cJSON_GetStringValue(bssid_obj);
+    if (bssid_str == NULL) {
+        em_printfout("%s:%d: Bssid is not a string", __func__, __LINE__);
+        cJSON_Delete(obj);
+        return 0;
+    }
+    dm_easy_mesh_t::string_to_macbytes(const_cast<char *> (bssid_str), assoc_param.bssid);
+
+    if ((assoc_control_obj = cJSON_GetObjectItem(wfa_obj, "AssocControl")) != NULL) {
+        double v = cJSON_GetNumberValue(assoc_control_obj);
+        if (v != 0.0 && v != 1.0) {
+            em_printfout("%s:%d: Invalid AssocControl=%g (allowed: 0=Block, 1=Unblock)", __func__, __LINE__, v);
+            cJSON_Delete(obj);
+            return 0;
+        }
+        assoc_param.assoc_control = static_cast<unsigned char>(v);
+    }
+
+    if ((validity_period_obj = cJSON_GetObjectItem(wfa_obj, "ValidityPeriod")) != NULL) {
+        double v = cJSON_GetNumberValue(validity_period_obj);
+        if (v < 0.0 || v > 65535.0) {
+            em_printfout("%s:%d: Invalid ValidityPeriod=%g (allowed: 0..65535)", __func__, __LINE__, v);
+            cJSON_Delete(obj);
+            return 0;
+        }
+        assoc_param.validity_period = static_cast<unsigned short>(v);
+    }
+
+    if ((sta_list_obj = cJSON_GetObjectItem(wfa_obj, "StaMacList")) == NULL) {
+        em_printfout("%s:%d: Failed to get StaMacList", __func__, __LINE__);
+        cJSON_Delete(obj);
+        return 0;
+    }
+
+    int sta_count = cJSON_GetArraySize(sta_list_obj);
+    if (sta_count <= 0) {
+        em_printfout("%s:%d: StaMacList cannot be empty", __func__, __LINE__);
+        cJSON_Delete(obj);
+        return 0;
+    }
+    if (sta_count > MAX_STA_LIST) {
+        em_printfout("%s:%d: StaMacList too large (%d), clamping to MAX_STA_LIST=%d", __func__, __LINE__, sta_count, MAX_STA_LIST);
+        sta_count = MAX_STA_LIST;
+    }
+
+    int valid_sta_count = 0;
+    for (int i = 0; i < sta_count && valid_sta_count < MAX_STA_LIST; i++) {
+        cJSON *sta_obj = cJSON_GetArrayItem(sta_list_obj, i);
+        const char *sta_str = cJSON_GetStringValue(sta_obj);
+        if (sta_str == NULL) {
+            continue;
+        }
+        dm_easy_mesh_t::string_to_macbytes(const_cast<char *>(sta_str), assoc_param.sta_list[valid_sta_count]);
+        valid_sta_count++;
+    }
+
+    if (valid_sta_count == 0) {
+        em_printfout("%s:%d: StaMacList did not contain any valid MAC strings", __func__, __LINE__);
+        cJSON_Delete(obj);
+        return 0;
+    }
+    assoc_param.sta_count = static_cast<unsigned char>(valid_sta_count);
+
+    cJSON_Delete(obj);
+
+    pcmd[num] = new em_cmd_client_assoc_ctrl_req_t(assoc_param, dm);
+    tmp = pcmd[num];
+    num++;
+
+    while ((pcmd[num] = tmp->clone_for_next()) != NULL) {
+        tmp = pcmd[num];
+        num++;
+    }
+
+    return num;
+}
+
 int dm_easy_mesh_ctrl_t::analyze_sta_disassoc(em_cmd_disassoc_params_t &params, em_cmd_t *pcmd[])
 {
     int num = 0;
@@ -2588,6 +2707,57 @@ int dm_easy_mesh_ctrl_t::analyze_set_ssid(em_bus_event_t *evt, em_cmd_t *pcmd[])
 
 
     return num;
+}
+
+int dm_easy_mesh_ctrl_t::analyze_set_bh_cfg(em_bus_event_t *evt, dm_easy_mesh_t *dm_out)
+{
+    int ret;
+    em_subdoc_info_t *subdoc;
+	dm_easy_mesh_t *pdm;
+	dm_network_ssid_t *tgt, *src;
+	int i, j;
+	int bit_mask = 0;
+
+    subdoc = &evt->u.subdoc;
+	if ((ret = dm_out->decode_config(subdoc, "SetBhCfg")) < 0) {
+		return ret;
+	}
+
+	pdm = m_data_model_list.get_first_dm();
+	if (pdm == NULL) {
+		assert(pdm != NULL);
+		return EM_PARSE_ERR_CONFIG;
+	}
+
+	for (i = 0; i < EM_MAX_NET_SSIDS; i++) {
+		tgt = &dm_out->m_network_ssid[i];
+		for (j = 0; j < EM_MAX_NET_SSIDS; j++) {
+			src = &pdm->m_network_ssid[j];
+			if (*tgt == *src) {
+				bit_mask |= (1 << i);
+				break;
+			}
+		}
+	}
+
+	if (bit_mask == (pow(2, EM_MAX_NET_SSIDS) - 1)) {
+		return EM_PARSE_ERR_NO_CHANGE;
+	}
+
+	// Update in-memory network SSIDs in ALL data models so that
+	// subsequent M2 creation uses the new SSID/passphrase.
+	dm_easy_mesh_t *iter_dm = m_data_model_list.get_first_dm();
+	while (iter_dm != NULL) {
+		iter_dm->m_num_net_ssids = dm_out->m_num_net_ssids;
+		for (i = 0; i < EM_MAX_NET_SSIDS; i++) {
+			iter_dm->m_network_ssid[i] = dm_out->m_network_ssid[i];
+		}
+		iter_dm = m_data_model_list.get_next_dm(iter_dm);
+	}
+
+	dm_out->set_db_cfg_param(db_cfg_type_network_ssid_list_update, "");
+
+    return 1;
 }
 
 int dm_easy_mesh_ctrl_t::analyze_remove_device(em_bus_event_t *evt, em_cmd_t *pcmd[])
@@ -3374,7 +3544,28 @@ void dm_easy_mesh_ctrl_t::init_tables()
 
 int dm_easy_mesh_ctrl_t::load_net_ssid_table()
 {
-	return dm_network_ssid_list_t::load_table(m_db_client);
+	int ret = dm_network_ssid_list_t::load_table(m_db_client);
+
+	// After reloading the global SSID hash map from DB, propagate the updated
+	// network SSIDs to all per-device data models so that create_encrypted_settings
+	// (which reads from em_t::m_data_model) picks up the new SSID/passphrase.
+	dm_network_ssid_t *net_ssid;
+	unsigned int idx;
+	dm_easy_mesh_t *dm;
+
+	for (dm = get_first_dm(); dm != NULL; dm = get_next_dm(dm)) {
+		idx = 0;
+		for (net_ssid = get_first_network_ssid(); net_ssid != NULL;
+				net_ssid = get_next_network_ssid(net_ssid)) {
+			if (idx < EM_MAX_NET_SSIDS) {
+				*(dm->get_network_ssid(idx)) = *net_ssid;
+				idx++;
+			}
+		}
+		dm->set_num_network_ssid(idx);
+	}
+
+	return ret;
 }
 
 int dm_easy_mesh_ctrl_t::load_tables()

@@ -40,6 +40,9 @@
 #include "em_configuration.h"
 #include "em_orch_ctrl.h"
 #include "em_cmd_ctrl.h"
+#include "em_network_topo.h"
+
+extern em_network_topo_t *g_network_topology;
 
 void em_orch_ctrl_t::orch_transient(em_cmd_t *pcmd, em_t *em)
 {
@@ -134,19 +137,28 @@ void em_orch_ctrl_t::orch_transient(em_cmd_t *pcmd, em_t *em)
                     }
                 }
             } else if (stats->time > (EM_MAX_CMD_GEN_TTL + EM_MAX_CMD_EXT_TTL)) {
-                em_printfout("Canceling cmd: %s because time limit exceeded",pcmd->get_cmd_name());
+                em_printfout("Canceling cmd: %s for agent %s because time limit exceeded",
+                    pcmd->get_cmd_name(),
+                    util::mac_to_string(dm->get_agent_al_interface_mac()).c_str());
                 // Reset the mismatch and topo_query_last sent values before canceling
                 dm->set_ssid_mismatch_check_time(0);
                 dm->set_last_topo_query_sent_time(0);
-                cancel_command(pcmd->get_type());
+                // Cancel only this agent's radios, not all em_config commands
+                cancel_command(pcmd->get_type(), all_em_radios);
             }
             break;
         }
 
+        case em_cmd_type_set_bh_cfg:
+            if (stats->time > (EM_MAX_CMD_GEN_TTL + EM_MAX_CMD_EXT_TTL)) {
+                cancel_command(pcmd->get_type());
+            }
+            break;
+
         default:
         if (stats->time > EM_MAX_CMD_GEN_TTL)
         {
-            em_printfout("Canceling cmd: %s because time limit exceeded",pcmd->get_cmd_name());
+            em_printfout("Canceling cmd: %s because time limit exceeded (stats->time=%u)",pcmd->get_cmd_name(), stats->time);
             cancel_command(pcmd->get_type());
         }
         break;
@@ -155,8 +167,9 @@ void em_orch_ctrl_t::orch_transient(em_cmd_t *pcmd, em_t *em)
 
 bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
 {
-    // if the command is SetSSID and 5 renews have been sent transition to fini
+    
     switch (pcmd->m_type) {
+        // if the command is SetSSID and 5 renews have been sent transition to fini
         case em_cmd_type_set_ssid:
         case em_cmd_type_cfg_renew:
 		case em_cmd_type_set_radio:
@@ -167,6 +180,15 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
             } else if (em->get_state() == em_state_ctrl_wsc_m2_sent) {
                 return true;
 			}
+            break;
+   
+        case em_cmd_type_set_bh_cfg:
+            if (em->get_state() == em_state_ctrl_wsc_m2_sent) {
+                return true;
+            } else if (em->get_renew_tx_count() >= EM_MAX_RENEW_TX_THRESH) {
+                em->set_renew_tx_count(0);
+                return true;
+            }
             break;
 
         case em_cmd_type_em_config:
@@ -241,6 +263,12 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
             }
             break;
 
+        case em_cmd_type_client_assoc_ctrl_req:
+            if (em->get_state() == em_state_ctrl_configured) {
+                return true;
+            }
+            break;
+
         case em_cmd_type_sta_disassoc:
             if (em->get_client_assoc_ctrl_req_tx_count() >= EM_MAX_CLIENT_ASSOC_CTRL_REQ_TX_THRESH) {
                 em->set_client_assoc_ctrl_req_tx_count(0);
@@ -297,6 +325,7 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
 {
     switch (pcmd->m_type) {
         case em_cmd_type_set_ssid:
+        case em_cmd_type_set_bh_cfg:
         case em_cmd_type_set_radio:
         case em_cmd_type_mld_reconfig:
         case em_cmd_type_start_dpp:
@@ -344,6 +373,7 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
         case em_cmd_type_scan_channel:
         case em_cmd_type_set_policy:
         case em_cmd_type_bsta_cap:
+        case em_cmd_type_client_assoc_ctrl_req:
             if (em->get_state() == em_state_ctrl_configured) {
                 return true;
             }
@@ -537,6 +567,7 @@ bool em_orch_ctrl_t::pre_process_orch_op(em_cmd_t *pcmd)
 
         case dm_orch_type_topo_publish:
         case dm_orch_type_bsta_cap_query:
+        case dm_orch_type_client_assoc:
 			break;
 
         default:
@@ -589,6 +620,16 @@ unsigned int em_orch_ctrl_t::build_candidates(em_cmd_t *pcmd)
                     //em_printfout("Set SSID: %s push to queue", mac_str);
                     queue_push(pcmd->m_em_candidates, em);
                     count++;
+                }
+                break;
+
+            case em_cmd_type_set_bh_cfg:
+                if (em->is_al_interface_em() == false && g_network_topology != NULL) {
+                    em_network_topo_t *topo = g_network_topology->find_topology(em->get_data_model());
+                    if (topo != NULL && topo->is_bh_reconfig_candidate()) {
+                        queue_push(pcmd->m_em_candidates, em);
+                        count++;
+                    }
                 }
                 break;
 
@@ -684,6 +725,20 @@ unsigned int em_orch_ctrl_t::build_candidates(em_cmd_t *pcmd)
 
             case em_cmd_type_sta_steer:
                 if (em->find_sta(pcmd->m_param.u.steer_params.sta_mac, pcmd->m_param.u.steer_params.source) != NULL) {
+                    queue_push(pcmd->m_em_candidates, em);
+                    count++;
+                }
+                break;
+
+            case em_cmd_type_client_assoc_ctrl_req:
+                if (em->is_al_interface_em() == false) {
+                    em_cmd_client_assoc_params_t *assoc = &pcmd->m_param.u.client_assoc_params;
+
+                    dm_bss_t *bss = em->find_bss(assoc->bssid);
+                    if (bss == NULL) {
+                        em_printfout("%s:%d: Skipping radio (BSSID not owned by this EM)\n", __func__, __LINE__);
+                        break;
+                    }
                     queue_push(pcmd->m_em_candidates, em);
                     count++;
                 }

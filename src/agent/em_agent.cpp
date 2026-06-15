@@ -789,37 +789,82 @@ void em_agent_t::handle_btm_response_action_frame(em_bus_event_t *evt)
 void em_agent_t::handle_client_assoc_ctrl_req(em_bus_event_t *evt)
 {
     wifi_bus_desc_t *desc;
-    raw_data_t raw;
-    client_assoc_ctrl_req_t req_data;
 
-    em_client_assoc_ctrl_req_t *steer_req = reinterpret_cast<em_client_assoc_ctrl_req_t*> (&evt->u.raw_buff);
+    if (evt == NULL) {
+        em_printfout("%s:%d NULL event!", __func__, __LINE__);
+        return;
+    }
+
+    em_client_assoc_ctrl_req_t *client_assoc = reinterpret_cast<em_client_assoc_ctrl_req_t *>(&evt->u.raw_buff);
 
     if ((desc = get_bus_descriptor()) == NULL) {
-        em_printfout("bus descriptor is null");
+        em_printfout("%s:%d bus descriptor is null", __func__, __LINE__);
         return;
     }
 
-    if (steer_req->count != 1) {
-        em_printfout("station count:%d is more than one", steer_req->count);
+    if (client_assoc->sta_count == 0 || client_assoc->sta_count > MAX_STA_LIST) {
+        em_printfout("%s:%d Invalid STA count 0 or exceeding maximum", __func__, __LINE__);
         return;
     }
-    memset(&req_data, 0, sizeof(client_assoc_ctrl_req_t));
 
-    memcpy(req_data.bssid, steer_req->bssid, sizeof(bssid_t));
-    req_data.assoc_control = steer_req->assoc_control;
-    req_data.validity_period = ntohs(steer_req->validity_period);
-    req_data.count = steer_req->count;
-    memcpy(req_data.sta_mac, steer_req->sta_mac, sizeof(mac_address_t));
-
-    memset(&raw, 0, sizeof(raw_data_t));
-    raw.data_type = bus_data_type_bytes;
-    raw.raw_data.bytes = static_cast<void *>(&req_data);
-    raw.raw_data_len = sizeof(client_assoc_ctrl_req_t);
-
-    if (desc->bus_set_fn(&m_bus_hdl,WIFI_EM_CLIENT_ASSOC_CTRL_REQ, &raw) != 0) {
-        em_printfout("%s:%d Failed to send client assoc ctrl request to bus",__func__, __LINE__);
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        em_printfout("%s:%d Failed to create JSON root object", __func__, __LINE__);
+        return;
     }
-    em_printfout("%s:%d Sent client assoc ctrl request to bus, OneWifi will process the bus event",__func__, __LINE__);
+
+    cJSON_AddStringToObject(root, "Version", "1.0");
+    cJSON_AddStringToObject(root, "SubDocName", "ClientAssocCtrlRequest");
+
+    cJSON *req = cJSON_AddObjectToObject(root, "ClientAssocCtrlRequest");
+    if (!req) {
+        cJSON_Delete(root);
+        return;
+    }
+
+    std::string bssid_str = util::mac_to_string(client_assoc->bssid);
+    cJSON_AddStringToObject(req, "Bssid", bssid_str.c_str());
+
+    cJSON_AddNumberToObject(req, "AssocControl", client_assoc->assoc_control);
+
+    uint16_t vp = ntohs(client_assoc->validity_period);
+    cJSON_AddNumberToObject(req, "ValidityPeriod", vp);
+
+    cJSON *sta_arr = cJSON_AddArrayToObject(req, "StaMacList");
+    if (!sta_arr) {
+        cJSON_Delete(root);
+        return;
+    }
+
+    for (uint8_t i = 0; i < client_assoc->sta_count; i++) {
+        std::string mac_str = util::mac_to_string(client_assoc->sta_list[i]);
+        cJSON_AddItemToArray(sta_arr, cJSON_CreateString(mac_str.c_str()));
+    }
+
+    char *json_str = cJSON_Print(root);
+    if (!json_str) {
+        em_printfout("%s:%d JSON serialization failed", __func__, __LINE__);
+        cJSON_Delete(root);
+        return;
+    }
+
+    em_printfout("%s:%d Received data for event [%s] and data:\n%s\n ", __func__, __LINE__,WIFI_EM_CLIENT_ASSOC_CTRL_REQ, json_str );
+
+    raw_data_t bus_data;
+    memset(&bus_data, 0, sizeof(bus_data));
+
+    bus_data.data_type = bus_data_type_string;
+    bus_data.raw_data.bytes = json_str;
+    bus_data.raw_data_len = strlen(json_str);
+
+    if (desc->bus_set_fn(&m_bus_hdl, WIFI_EM_CLIENT_ASSOC_CTRL_REQ, &bus_data) != 0) {
+        em_printfout("%s:%d Failed to send CACR subdoc", __func__, __LINE__);
+    } else {
+        em_printfout("%s:%d Sent CACR subdoc successfully", __func__, __LINE__);
+    }
+
+    free(json_str);
+    cJSON_Delete(root);
 }
 
 void em_agent_t::handle_channel_scan_result(em_bus_event_t *evt)
@@ -1372,6 +1417,7 @@ void em_agent_t::input_listener()
         // This is fine, not a fatal error
     }
 
+    /*
     if (desc->bus_event_subs_fn(&m_bus_hdl, "Device.WiFi.EM.APMetricsReport", reinterpret_cast<void *>(&em_agent_t::report_cb), NULL, 0) != 0) {
         em_printfout("Error: bus get failed");
         return;
@@ -1381,6 +1427,7 @@ void em_agent_t::input_listener()
         em_printfout("Error: bus get failed");
         return;
     }
+        */
 
    if(desc->bus_event_subs_fn(&m_bus_hdl, "Device.WiFi.CSABeaconFrameRecieved", reinterpret_cast<void *>(&em_agent_t::mgmt_csa_beacon_frame_cb), NULL, 0) != 0) {
         em_printfout("Error: bus get failed");
@@ -1478,7 +1525,7 @@ int em_agent_t::report_cb(char *event_name, bus_data_prop_t *data, void *userDat
             }
             cJSON_Delete(json);
         }
-        g_agent.io_process(em_bus_event_type_link_quality_report, reinterpret_cast<unsigned char *>(data->value.raw_data.bytes), data->value.raw_data_len);
+        //g_agent.io_process(em_bus_event_type_link_quality_report, reinterpret_cast<unsigned char *>(data->value.raw_data.bytes), data->value.raw_data_len);
     }
 
     return 0;
@@ -1612,8 +1659,11 @@ void em_agent_t::onewifi_cb(char *event_name, bus_data_prop_t *data, void *userD
                (strcmp(subdoc_name->valuestring, "mesh backhaul sta") == 0)) {
         g_agent.io_process(em_bus_event_type_onewifi_mesh_sta_cb, reinterpret_cast<unsigned char *>(data->value.raw_data.bytes), data->value.raw_data_len);
 
+    } else if (strcmp(subdoc_name->valuestring, "dml") == 0) {
+        g_agent.io_process(em_bus_event_type_dev_init, reinterpret_cast<unsigned char *>(data->value.raw_data.bytes), data->value.raw_data_len);
+
     } else {
-        em_printfout("SubDocName (%s) not matching private, mesh_sta, or radio", subdoc_name->valuestring);
+        em_printfout("SubDocName (%s) not matching private, mesh_sta, radio, or dml", subdoc_name->valuestring);
     }
 
     cJSON_Delete(json);

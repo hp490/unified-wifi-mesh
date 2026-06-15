@@ -98,6 +98,7 @@ void em_t::orch_execute(em_cmd_t *pcmd)
 			break;
 
         case em_cmd_type_set_ssid:
+        case em_cmd_type_set_bh_cfg:
         case em_cmd_type_set_radio:
 	    if (m_service_type == em_service_type_ctrl) {
 	        set_renew_tx_count(0);
@@ -249,6 +250,9 @@ void em_t::orch_execute(em_cmd_t *pcmd)
 
         case em_cmd_type_get_link_quality_report:
             m_sm.set_state(em_state_agent_link_quality_report_pending);
+            break;
+        case em_cmd_type_client_assoc_ctrl_req:
+            m_sm.set_state(em_state_ctrl_client_assoc_ctrl_req_pending);
             break;
 
         default:
@@ -499,6 +503,7 @@ void em_t::handle_ctrl_state()
     cmd_type = m_cmd->m_type;
     switch (cmd_type) {
         case em_cmd_type_set_ssid:
+        case em_cmd_type_set_bh_cfg:
         case em_cmd_type_set_radio:
         case em_cmd_type_cfg_renew:
             em_configuration_t::process_ctrl_state();
@@ -548,6 +553,10 @@ void em_t::handle_ctrl_state()
 
         case em_cmd_type_bsta_cap:
             em_capability_t::process_ctrl_state();
+            break;
+
+        case em_cmd_type_client_assoc_ctrl_req:
+            em_steering_t::process_ctrl_state();
             break;
 
         default:
@@ -931,6 +940,30 @@ em_event_t *em_t::pop_from_queue()
     return reinterpret_cast<em_event_t *>(queue_pop(m_iq.queue));
 }
 
+dm_bss_t *em_t::find_bss(bssid_t bssid)
+{
+    dm_bss_t *bss;
+    em_bss_info_t *bss_info;
+
+    bss_info = get_data_model()->get_bss_info_with_mac(bssid);
+    if (bss_info == NULL) {
+        return NULL;
+    }
+
+    // Get the BSS object from the data model
+    bss = get_data_model()->get_bss(bss_info->ruid.mac, bssid);
+    if (bss == NULL) {
+        return NULL;
+    }
+
+    // the bss can be from a different radio
+    if (memcmp(bss_info->ruid.mac, get_radio_interface_mac(), sizeof(mac_address_t)) == 0) {
+        return bss;
+    }
+
+    return NULL;
+}
+
 dm_sta_t *em_t::find_sta(mac_address_t sta_mac, bssid_t bssid)
 {
     dm_sta_t *sta;
@@ -1045,7 +1078,7 @@ short em_t::create_ap_cap_tlv(unsigned char *buff)
     ap_cap->unassociated_client_link_metrics_non_op_channels = radio_info->unassociated_sta_link_mterics_nonopclass_inclusion_policy;
     ap_cap->unassociated_client_link_metrics_op_channels =  radio_info->unassociated_sta_link_mterics_opclass_inclusion_policy;
     ap_cap->rcpi_steering = radio_info->support_rcpi_steering;
-    // ap_cap->reserved - Future implementation
+    ap_cap->m8_bsta_reconfiguration = 1;
     len = sizeof(em_ap_capability_t);
     return len;
 }

@@ -107,6 +107,27 @@ class em_steering_t {
 	int send_1905_ack_message(mac_addr_t sta_mac, unsigned short msg_id, unsigned char reason = 0, unsigned char *dst = nullptr);
     
 	/**!
+	 * @brief Sends a 1905 acknowledgment message to a specified station with Error Code TLV for associated stations.
+	 *
+	 * This function is responsible for sending an acknowledgment message
+	 * to the associated station with Error Code TLV.
+	 *
+	 * @param[in] sta_mac The MAC address of the station to which the acknowledgment
+	 * message will be sent.
+	 * @param[in] msg_id The message ID of the original message being acknowledged.
+	 * @param[in] reason The reason code used in Error Code TLV.
+	 * @param[in] dst Destination AL MAC to use when controller AL MAC is unknown).
+	 *
+	 * @returns int
+	 * @retval 0 on success
+	 * @retval -1 on failure
+	 *
+	 * @note Ensure that the MAC address is valid and the station is reachable
+	 * before calling this function.
+	 */
+	int send_consolidated_1905_ack_message(const std::vector<const unsigned char*>& sta_list, unsigned short msg_id, unsigned char reason, unsigned char *dst);
+
+	/**!
 	 * @brief Handles the client steering request.
 	 *
 	 * This function processes the steering request received from a client.
@@ -184,7 +205,7 @@ class em_steering_t {
 	 *
 	 * @note Ensure the buffer is large enough to hold the TLV structure.
 	 */
-	short create_error_code_tlv(unsigned char *buff, int val, mac_addr_t sta_mac);
+	short create_error_code_tlv(unsigned char *buff, int val, const mac_addr_t sta_mac);
     
 	/**!
 	 * @brief Creates a BTM report TLV.

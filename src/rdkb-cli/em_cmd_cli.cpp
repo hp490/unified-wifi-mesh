@@ -69,7 +69,9 @@ em_cmd_params_t spec_params[] = {
     {.u = {.args = {2, {"", "", "", "", ""}, "MLDConfig"}}},
     {.u = {.args = {2, {"", "", "", "", ""}, "MLDReconfig"}}},
     {.u = {.args = {2, {"", "", "", "", ""}, "WifiReset"}}},
+    {.u = {.args = {2, {"", "", "", "", ""}, "ClientAssocCtrlRequest.json"}}},
 	{.u = {.args = {0, {"", "", "", "", ""}, "max"}}},
+	{.u = {.args = {2, {"", "", "", "", ""}, "BhCfg.json"}}},
 };
 
 em_cmd_t em_cmd_cli_t::m_client_cmd_spec[] = {
@@ -103,7 +105,9 @@ em_cmd_t em_cmd_cli_t::m_client_cmd_spec[] = {
     em_cmd_t(em_cmd_type_get_mld_config, spec_params[26]),
     em_cmd_t(em_cmd_type_mld_reconfig, spec_params[27]),
     em_cmd_t(em_cmd_type_get_reset, spec_params[28]),
-    em_cmd_t(em_cmd_type_max, spec_params[29]),
+    em_cmd_t(em_cmd_type_client_assoc_ctrl_req, spec_params[29]),
+    em_cmd_t(em_cmd_type_set_bh_cfg, spec_params[31]),
+    em_cmd_t(em_cmd_type_max, spec_params[30]),
 };
 
 int em_cmd_cli_t::get_edited_node(em_network_node_t *node, const char *header, char *buff)
@@ -309,6 +313,19 @@ int em_cmd_cli_t::execute(char *result)
 			}	
             break;
 
+        case em_cmd_type_set_bh_cfg:
+			if ((node = m_cmd.m_param.net_node) == NULL) {
+				return -1;
+			}
+            bevt->type = em_bus_event_type_set_bh_cfg;
+            info = &bevt->u.subdoc;
+            strncpy(info->name, param->u.args.fixed_args, strlen(param->u.args.fixed_args) + 1);
+			if ((bevt->data_len = get_edited_node(node, "SetBhCfg", info->buff)) < 0) {
+                printf("%s:%d: failed to open file at location:%s error:%d\n", __func__, __LINE__, param->u.args.fixed_args, errno);
+                return -1;
+			}	
+            break;
+
         case em_cmd_type_get_channel:
             bevt->type = em_bus_event_type_get_channel;
             info = &bevt->u.subdoc;
@@ -454,6 +471,15 @@ int em_cmd_cli_t::execute(char *result)
             snprintf(info->name, sizeof(info->name), "%s", param->u.args.fixed_args);
             break;
 
+        case em_cmd_type_client_assoc_ctrl_req:
+            bevt->type = em_bus_event_type_client_assoc_ctrl_req;
+            info = &bevt->u.subdoc;
+            snprintf(info->name, sizeof(info->name), "%s", param->u.args.fixed_args);
+            if ((bevt->data_len = get_edited_node(m_cmd.m_param.net_node, "ClientAssocCtrlRequest", info->buff)) < 0) {
+                printf("%s:%d: failed to get client assoc ctrl req node\n", __func__, __LINE__);
+                return -1;
+            }
+            break;
         default:
             break;
     }
