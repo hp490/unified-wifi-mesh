@@ -162,7 +162,7 @@ public:
 	short create_metrics_rep_policy_tlv(unsigned char *buff);
 
 	/**!
-	 * @brief Creates a default 802.1Q settings policy TLV.
+	 * @brief Creates a default 802.1q settings policy TLV.
 	 *
 	 * This function generates a default 802.1q settings TLV (Type-Length-Value) and stores it in the provided buffer.
 	 *
@@ -172,10 +172,9 @@ public:
 	 *
 	 * @note Ensure that the buffer is large enough to hold the TLV.
 	 */
-	virtual short create_def_8021q_settings_policy_tlv(unsigned char *buff) = 0;
+	short create_def_8021q_settings_policy_tlv(unsigned char *buff);
 
 	/**!
-
 	 * @brief Creates a traffic separation policy TLV.
 	 *
 	 * This function generates a traffic separation policy TLV (Type-Length-Value) and stores it in the provided buffer.
@@ -186,7 +185,7 @@ public:
 	 *
 	 * @note Ensure that the buffer is large enough to hold the TLV.
 	 */
-	virtual unsigned short create_traffic_separation_policy_tlv(unsigned char *buff) = 0;
+	short create_traffic_sep_policy_tlv(unsigned char *buff);
 
 	/**!
 	 * @brief Creates a channel scan report policy TLV.
@@ -225,7 +224,7 @@ public:
 	 *
 	 * @note Ensure that the buffer is large enough to hold the TLV.
 	 */
-short create_backhaul_bss_conf_policy_tlv(unsigned char *buff, const em_backhaul_bss_config_policy_t *entry);
+	short create_backhaul_bss_conf_policy_tlv(unsigned char *buff);
 
 	/**!
 	 * @brief Creates a qos management policy TLV.
@@ -238,7 +237,7 @@ short create_backhaul_bss_conf_policy_tlv(unsigned char *buff, const em_backhaul
 	 *
 	 * @note Ensure that the buffer is large enough to hold the TLV.
 	 */
-short create_qos_mgt_policy_tlv(unsigned char *buff, dm_policy_t *policy, unsigned int qi);
+	short create_qos_mgt_policy_tlv(unsigned char *buff);
 
 	/**!
 	 * @brief Creates a vendor policy configuration TLV.
