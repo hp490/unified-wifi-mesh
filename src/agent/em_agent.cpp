@@ -1597,7 +1597,7 @@ void em_agent_t::input_listener()
         // This is fine, not a fatal error
     }
 
-    if (desc->bus_event_subs_fn(&m_bus_hdl, "Device.WiFi.EM.APMetricsReport", reinterpret_cast<void *>(&em_agent_t::report_cb), NULL, 0) != 0) {
+/*    if (desc->bus_event_subs_fn(&m_bus_hdl, "Device.WiFi.EM.APMetricsReport", reinterpret_cast<void *>(&em_agent_t::report_cb), NULL, 0) != 0) {
         em_printfout("Error: bus get failed");
         return;
     }
@@ -1606,7 +1606,7 @@ void em_agent_t::input_listener()
         em_printfout("Error: bus get failed");
         return;
     }
-
+*/
    if(desc->bus_event_subs_fn(&m_bus_hdl, "Device.WiFi.CSABeaconFrameRecieved", reinterpret_cast<void *>(&em_agent_t::mgmt_csa_beacon_frame_cb), NULL, 0) != 0) {
         em_printfout("Error: bus get failed");
         return;
@@ -1732,7 +1732,7 @@ int em_agent_t::report_cb(char *event_name, bus_data_prop_t *data, void *userDat
     (void)userData;
 
     if (strncmp(event_name, "Device.WiFi.EM.APMetricsReport", sizeof("Device.WiFi.EM.APMetricsReport"))==0) {
-        g_agent.io_process(em_bus_event_type_ap_metrics_report, reinterpret_cast<unsigned char *>(data->value.raw_data.bytes), data->value.raw_data_len);
+      //  g_agent.io_process(em_bus_event_type_ap_metrics_report, reinterpret_cast<unsigned char *>(data->value.raw_data.bytes), data->value.raw_data_len);
     } else if (strncmp(event_name, WIFI_QUALITY_LINKREPORT, sizeof(WIFI_QUALITY_LINKREPORT))==0) {
         cJSON *json = cJSON_Parse(reinterpret_cast<const char *>(data->value.raw_data.bytes));
         if (json != NULL) {
