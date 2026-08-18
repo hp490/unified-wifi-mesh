@@ -1605,7 +1605,8 @@ invalid:
             }
         }
     } while (0);
-    if (!cJSON_AddNumberToObject(json, "AssocControl", block)) {
+    /* EasyMesh spec: AssocControl 0x00 = Block, 0x01 = Unblock */
+    if (!cJSON_AddNumberToObject(json, "AssocControl", block ? 0 : 1)) {
         em_printfout("Add Block failed");
         goto cleanup;
     }
