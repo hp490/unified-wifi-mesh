@@ -722,11 +722,15 @@ unsigned int em_orch_ctrl_t::build_candidates(em_cmd_t *pcmd)
             case em_cmd_type_client_assoc_ctrl_req:
                 if (em->is_al_interface_em() == false) {
                     em_cmd_client_assoc_params_t *assoc = &pcmd->m_param.u.client_assoc_params;
+                    mac_addr_str_t em_mac_str;
+                    dm_easy_mesh_t::macbytes_to_string(em->get_radio_interface_mac(), em_mac_str);
 
-                    if (em->find_bss(assoc->bssid) == NULL) {
-                        em_printfout("Skipping radio (BSSID not owned by this EM)\n");
+                    dm_bss_t *bss = em->find_bss(assoc->bssid);
+                    if (bss == NULL || bss->m_bss_info.vap_mode != em_vap_mode_ap) {
+                        em_printfout("Skipping radio %s (BSSID not AP on this EM)\n", em_mac_str);
                         break;
                     }
+                    em_printfout("Pushing radio %s as candidate for client assoc ctrl\n", em_mac_str);
                     queue_push(pcmd->m_em_candidates, em);
                     count++;
                 }

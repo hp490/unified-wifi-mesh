@@ -66,9 +66,19 @@ int em_steering_t::send_client_assoc_ctrl_req_msg()
         return -1;  // Reject request
     }
 
+    mac_addr_str_t dbg_radio_str;
+    dm_easy_mesh_t::macbytes_to_string(get_radio_interface_mac(), dbg_radio_str);
+    em_printfout("send_assoc_ctrl: radio %s searching %u BSS entries", dbg_radio_str, dm->m_num_bss);
+
     for (unsigned int j = 0; j < dm->m_num_bss; j++) {
         if ((memcmp(assoc_param->bssid, dm->m_bss[j].m_bss_info.bssid.mac, sizeof(mac_address_t)) == 0) &&
-         (memcmp(dm->m_bss[j].m_bss_info.ruid.mac, get_radio_interface_mac(), sizeof(mac_address_t)) == 0)) {
+         (memcmp(dm->m_bss[j].m_bss_info.ruid.mac, get_radio_interface_mac(), sizeof(mac_address_t)) == 0) &&
+         (dm->m_bss[j].m_bss_info.vap_mode == em_vap_mode_ap)) {
+
+            mac_addr_str_t dbg_bssid_str, dbg_ruid_str;
+            dm_easy_mesh_t::macbytes_to_string(dm->m_bss[j].m_bss_info.bssid.mac, dbg_bssid_str);
+            dm_easy_mesh_t::macbytes_to_string(dm->m_bss[j].m_bss_info.ruid.mac, dbg_ruid_str);
+            em_printfout("send_assoc_ctrl: match BSS[%u] BSSID=%s RUID=%s radio=%s", j, dbg_bssid_str, dbg_ruid_str, dbg_radio_str);
 
             em_client_assoc_ctrl_req_t assoc_ctrl;
             memset(&assoc_ctrl, 0, sizeof(assoc_ctrl));

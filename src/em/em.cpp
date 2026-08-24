@@ -972,23 +972,33 @@ dm_bss_t *em_t::find_bss(bssid_t bssid)
 {
     dm_bss_t *bss;
     em_bss_info_t *bss_info;
+    mac_addr_str_t bssid_str, ruid_str, radio_str;
+
+    dm_easy_mesh_t::macbytes_to_string(bssid, bssid_str);
+    dm_easy_mesh_t::macbytes_to_string(get_radio_interface_mac(), radio_str);
 
     bss_info = get_data_model()->get_bss_info_with_mac(bssid);
     if (bss_info == NULL) {
+        em_printfout("find_bss: BSSID %s not found in DM for radio %s", bssid_str, radio_str);
         return NULL;
     }
+
+    dm_easy_mesh_t::macbytes_to_string(bss_info->ruid.mac, ruid_str);
 
     // Get the BSS object from the data model
     bss = get_data_model()->get_bss(bss_info->ruid.mac, bssid);
     if (bss == NULL) {
+        em_printfout("find_bss: get_bss returned NULL for BSSID %s RUID %s", bssid_str, ruid_str);
         return NULL;
     }
 
     // the bss can be from a different radio
     if (memcmp(bss_info->ruid.mac, get_radio_interface_mac(), sizeof(mac_address_t)) == 0) {
+        em_printfout("find_bss: BSSID %s RUID %s matches radio %s", bssid_str, ruid_str, radio_str);
         return bss;
     }
 
+    em_printfout("find_bss: BSSID %s RUID %s != radio %s, skipping", bssid_str, ruid_str, radio_str);
     return NULL;
 }
 
