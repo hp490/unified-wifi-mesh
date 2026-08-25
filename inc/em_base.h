@@ -2398,6 +2398,7 @@ typedef enum {
     em_cmd_type_unassoc_sta_query,
     em_cmd_type_unassoc_sta_result,
     em_cmd_type_client_assoc_ctrl_req,
+    em_cmd_type_set_bh_cfg,
 
     em_cmd_type_max,
 } em_cmd_type_t;
@@ -2526,6 +2527,7 @@ typedef struct {
     em_small_string_t    primary_device_type;
     em_small_string_t    secondary_device_type;
     ieee_1905_security_t    sec_1905;
+    bool    m8_bsta_reconfiguration;
     
     uint8_t is_emplus_agent;
 } em_device_info_t;
@@ -3096,6 +3098,7 @@ typedef enum {
     em_bus_event_type_recv_csa_beacon_frame,
     em_bus_event_type_bsta_cap_req,
     em_bus_event_type_link_quality_report,
+    em_bus_event_type_set_bh_cfg,
     em_bus_event_type_client_assoc_ctrl_req,
     em_bus_event_type_unassoc_sta_query,
     em_bus_event_type_unassoc_sta_link_metrics_query,
@@ -3247,6 +3250,7 @@ typedef struct{
 	em_haul_type_t haultype[EM_MAX_BSS_PER_RADIO];
 	mac_address_t radio_mac[EM_MAX_BSS_PER_RADIO];
     em_4xlong_string_t dpp_connector[EM_MAX_BSS_PER_RADIO];
+	bool is_bh_reconfig;
 } m2ctrl_radioconfig;
 
 typedef struct{
