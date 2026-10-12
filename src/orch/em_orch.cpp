@@ -640,7 +640,6 @@ void em_orch_t::handle_timeout()
             }
             destroy_command(pcmd);
             //em->set_state(em_state_agent_config_complete);
-
             if (bh_reconfig_next && g_network_topology != NULL) {
                 g_network_topology->send_bh_reconfig_event();
             }

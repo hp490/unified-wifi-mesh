@@ -177,7 +177,8 @@ void em_orch_ctrl_t::orch_transient(em_cmd_t *pcmd, em_t *em)
 
 bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
 {
-    
+    em_state_t state = em->get_state();
+
     switch (pcmd->m_type) {
         // if the command is SetSSID and 5 renews have been sent transition to fini
         case em_cmd_type_set_ssid:
@@ -202,7 +203,11 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
             break;
 
         case em_cmd_type_em_config:
-            if (em->get_state() == em_state_ctrl_configured) {
+            if (pcmd->get_orch_op() == dm_orch_type_acl_cfg) {
+                return (state == em_state_ctrl_acl_cfg_configured) ||
+                        (state == em_state_ctrl_acl_cfg_failed);
+            }
+                if (state == em_state_ctrl_configured) {
                 em->set_topo_query_tx_count(0);
                 em->set_channel_pref_query_tx_count(0);
 				em->set_channel_sel_req_tx_count(0);
@@ -212,8 +217,6 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
             } else if (em->get_state() == em_state_ctrl_topo_synchronized) {
                 return true;
             } else if (em->get_state() == em_state_ctrl_channel_queried) {
-                return true;
-            } else if (em->get_state() == em_state_ctrl_configured) {
                 return true;
             } else if (em->get_state() == em_state_ctrl_wsc_m2_sent) {
                 // A second M1/M2 exchange on 2.4GHz regresses the per band state machine back to em_state_ctrl_m2_sent,
@@ -230,12 +233,12 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
             break;
         
         case em_cmd_type_set_channel:
-            if (em->get_state() == em_state_ctrl_configured) {
+            if (state == em_state_ctrl_configured) {
                 return true;
             }
 	    break;
         case em_cmd_type_scan_channel:
-            if (em->get_state() == em_state_ctrl_configured) {                               
+            if (state == em_state_ctrl_configured) {
                 return true;
             }
             break;
@@ -251,13 +254,13 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
                 return true;
             } else if (em->get_state() == em_state_ctrl_topo_synchronized) {
                 return true;
-            } else if (em->get_state() == em_state_ctrl_configured) {
+            } else if (state == em_state_ctrl_configured) {
                 return true;
             }
             break;
 
         case em_cmd_type_sta_link_metrics:
-            if (em->get_state() == em_state_ctrl_configured) {
+            if (state == em_state_ctrl_configured) {
                 return true;
             }
             break;
@@ -268,13 +271,13 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
                 em->set_state(em_state_ctrl_configured);
                 printf("%s:%d: Maximum client steering req threshold crossed, transitioning to fini\n", __func__, __LINE__);
                 return true;
-            } else if (em->get_state() == em_state_ctrl_configured) {
+            } else if (state == em_state_ctrl_configured) {
                 return true;
             }
             break;
 
         case em_cmd_type_client_assoc_ctrl_req:
-            if (em->get_state() == em_state_ctrl_configured) {
+            if (state == em_state_ctrl_configured) {
                 return true;
             }
             break;
@@ -285,14 +288,14 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
                 em->set_state(em_state_ctrl_configured);
                 printf("%s:%d: Maximum client assoc control req threshold crossed, transitioning to fini\n", __func__, __LINE__);
                 return true;
-            } else if (em->get_state() == em_state_ctrl_configured) {
+            } else if (state == em_state_ctrl_configured) {
                 return true;
             }
 
             break;
 
 		case em_cmd_type_set_policy:
-            if (em->get_state() == em_state_ctrl_configured) {
+        if (state == em_state_ctrl_configured) {
                 // Commit policies from the command DM to the live data model and DB
                 dm_easy_mesh_t *cmd_dm = pcmd->get_data_model();
                 dm_easy_mesh_t *live_dm = em->get_data_model();
@@ -325,7 +328,7 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
             break;
 
 	case em_cmd_type_unassoc_sta_query:
-            if (em->get_state() == em_state_ctrl_configured) {
+    if (state == em_state_ctrl_configured) {
                 return true;
             }
             break;
@@ -339,6 +342,8 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_fini(em_cmd_t *pcmd, em_t *em)
 
 bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
 {
+    em_state_t em_state = em->get_state();
+
     switch (pcmd->m_type) {
         case em_cmd_type_set_ssid:
         case em_cmd_type_set_bh_cfg:
@@ -348,7 +353,36 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
             return true;
 
         case em_cmd_type_em_config:
-        case em_cmd_type_cfg_renew:
+            if (pcmd->get_orch_op() == dm_orch_type_acl_cfg) {
+                dm_easy_mesh_t *dm = em->get_data_model();
+                if (dm == NULL) {
+                    return false;
+                }
+
+                std::vector<em_t *> em_radios;
+                m_mgr->get_all_em_for_al_mac(dm->get_agent_al_interface_mac(), em_radios);
+                if (em_radios.empty()) {
+                    return false;
+                }
+
+                for (em_t *radio : em_radios) {
+                    em_state_t radio_state = radio->get_state();
+                    if ((radio_state != em_state_ctrl_configured) &&
+                            (radio_state != em_state_ctrl_acl_cfg_pending) &&
+                            (radio_state != em_state_ctrl_acl_cfg_configured) &&
+                            (radio_state != em_state_ctrl_acl_cfg_failed)) {
+                        return false;
+                    }
+                }
+
+                return (em_state == em_state_ctrl_configured) ||
+                        (em_state == em_state_ctrl_acl_cfg_pending) ||
+                        (em_state == em_state_ctrl_acl_cfg_configured) ||
+                        (em_state == em_state_ctrl_acl_cfg_failed);
+            }
+                [[fallthrough]];
+
+            case em_cmd_type_cfg_renew:
             if (em->get_state() == em_state_ctrl_unconfigured) {
 				return true;
             } else if (em->get_state() == em_state_ctrl_wsc_m2_sent) {
@@ -361,7 +395,7 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
                 return true;
             } else if (em->get_state() == em_state_ctrl_channel_selected) {
                 return true;
-            } else if (em->get_state() == em_state_ctrl_configured) {
+            } else if (em_state == em_state_ctrl_configured) {
                 return true;
             } else if (em->get_state() == em_state_ctrl_misconfigured) {
                 return true;
@@ -374,8 +408,11 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
             }
             break;
 
+	case em_cmd_type_scan_channel:
+		return em_state == em_state_ctrl_configured;
+
 	case em_cmd_type_set_channel:
-	   if (em->get_state() == em_state_ctrl_configured) {
+    if (em_state == em_state_ctrl_configured) {
                 return true;
             } else if (em->get_state() == em_state_ctrl_misconfigured) {
                 return true;
@@ -383,15 +420,21 @@ bool em_orch_ctrl_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
 		return true;
 	    }
 	break;
+    case em_cmd_type_bsta_cap:
+        return (em_state == em_state_ctrl_topo_synchronized) ||
+            (em_state == em_state_ctrl_ap_cap_report_received) ||
+            (em_state == em_state_ctrl_channel_queried) ||
+            (em_state == em_state_ctrl_channel_selected) ||
+            (em_state == em_state_ctrl_misconfigured) ||
+            (em_state == em_state_ctrl_acl_cfg_configured) ||
+            (em_state == em_state_ctrl_configured);
         case em_cmd_type_sta_steer:
         case em_cmd_type_sta_disassoc:
         case em_cmd_type_sta_link_metrics:
-        case em_cmd_type_scan_channel:
         case em_cmd_type_set_policy:
-        case em_cmd_type_bsta_cap:
 	case em_cmd_type_unassoc_sta_query:
         case em_cmd_type_client_assoc_ctrl_req:
-            if (em->get_state() == em_state_ctrl_configured) {
+            if (em_state == em_state_ctrl_configured) {
                 return true;
             }
             break;
@@ -453,7 +496,7 @@ bool em_orch_ctrl_t::pre_process_orch_op(em_cmd_t *pcmd)
 {
     em_t *em;
     em_ctrl_t *ctrl = static_cast<em_ctrl_t *>(m_mgr);
-    dm_easy_mesh_ctrl_t *dm_ctrl = reinterpret_cast<dm_easy_mesh_ctrl_t *>(ctrl->get_data_model(GLOBAL_NET_ID));
+    dm_easy_mesh_ctrl_t *dm_ctrl = ctrl->get_dm_ctrl();
     dm_easy_mesh_t *dm = &pcmd->m_data_model;
     dm_easy_mesh_t *mgr_dm;
     mac_addr_str_t	mac_str;
@@ -584,8 +627,61 @@ bool em_orch_ctrl_t::pre_process_orch_op(em_cmd_t *pcmd)
 
         case dm_orch_type_topo_publish:
         case dm_orch_type_bsta_cap_query:
-        case dm_orch_type_client_assoc:
+        case dm_orch_type_acl_cfg:
 			break;
+
+        case dm_orch_type_client_assoc:
+        {
+            // Persist the ACL carried by the CACR so it survives a controller/agent reboot
+            em_cmd_client_assoc_params_t *assoc = &pcmd->m_param.u.client_assoc_params;
+            mac_addr_str_t dev_mac_str, radio_mac_str, bss_mac_str;
+            em_2xlong_string_t bss_key;
+
+            pthread_mutex_lock(&m_mgr->m_mutex);
+            em = static_cast<em_t *>(hash_map_get_first(m_mgr->m_em_map));
+            while (em != NULL) {
+                dm_bss_t *bss = (em->is_al_interface_em() == false) ? em->find_bss(assoc->bssid) : NULL;
+                if ((bss != NULL) && (bss->m_bss_info.vap_mode == em_vap_mode_ap)) {
+                    dm_easy_mesh_t::macbytes_to_string(bss->m_bss_info.id.dev_mac, dev_mac_str);
+                    dm_easy_mesh_t::macbytes_to_string(bss->m_bss_info.ruid.mac, radio_mac_str);
+                    dm_easy_mesh_t::macbytes_to_string(bss->m_bss_info.bssid.mac, bss_mac_str);
+                    snprintf(bss_key, sizeof(bss_key), "%s@%s@%s@%s@%d", bss->m_bss_info.id.net_id,
+                            dev_mac_str, radio_mac_str, bss_mac_str, bss->m_bss_info.id.haul_type);
+
+                    int acl_rc;
+                    // Backhaul is whitelist-only: block drops the STA from the allow list
+                    if ((bss->m_bss_info.id.haul_type == em_haul_type_backhaul) &&
+                            (assoc->assoc_control == ASSOC_CONTROL_BLOCK)) {
+                        acl_rc = dm_ctrl->acl_remove_stas(bss_key, assoc->sta_count, assoc->sta_list);
+                    } else {
+                        acl_rc = dm_ctrl->acl_update(bss_key, assoc->assoc_control,
+                                assoc->sta_count, assoc->sta_list);
+                    }
+
+                    if (acl_rc != 0) {
+                        em_printfout("Failed to update ACL state for BSS %s; database persistence skipped", bss_key);
+                        break;
+                    }
+
+                    // Backhaul APs admit only the listed STAs, fronthaul APs deny them.
+                    bss->m_bss_info.acl_filter_mode =
+                            (bss->m_bss_info.id.haul_type == em_haul_type_backhaul) ?
+                            EM_ACL_MODE_WHITELIST : EM_ACL_MODE_BLACKLIST;
+                    bss->m_bss_info.acl_validity_period = assoc->validity_period;
+                    bss->m_bss_info.acl_revision++;
+
+                    mgr_dm = em->get_data_model();
+                    if (mgr_dm != NULL) {
+                        mgr_dm->set_db_cfg_param(db_cfg_type_bss_list_update, "");
+                        m_mgr->update_tables(mgr_dm);
+                    }
+                    break;
+                }
+                em = static_cast<em_t *>(hash_map_get_next(m_mgr->m_em_map, em));
+            }
+            pthread_mutex_unlock(&m_mgr->m_mutex);
+            break;
+        }
 
         default:
             break;
@@ -705,7 +801,8 @@ unsigned int em_orch_ctrl_t::build_candidates(em_cmd_t *pcmd)
                 break;
 
             case em_cmd_type_sta_link_metrics:
-                if ((em->is_al_interface_em() == false) && (em->get_state() == em_state_ctrl_configured)  && 
+                if ((em->is_al_interface_em() == false) &&
+                    (em->get_state() == em_state_ctrl_configured) &&
                     (em->has_at_least_one_associated_sta() == true)) {
                     queue_push(pcmd->m_em_candidates, em);
                     count++;

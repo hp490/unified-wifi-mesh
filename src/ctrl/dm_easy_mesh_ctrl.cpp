@@ -3894,14 +3894,18 @@ int dm_easy_mesh_ctrl_t::analyze_remove_device(em_bus_event_t *evt, em_cmd_t *pc
     int i, num = 0;
     em_subdoc_info_t *subdoc;
 	mac_address_t dev_mac_to_keep[32];
+    mac_address_t backhaul_bssids[32] = {};
+    mac_address_t backhaul_sta_macs[32] = {};
 	int num_devs_to_keep = 0;
 	dm_device_t *devices_to_delete[32];
 	int num_devs_to_delete = 0;
+    int num_backhaul_blocks = 0;
 	char *tmp;
 	bool keep = false;
 	dm_device_t *device;
 	mac_addr_str_t	mac_str;
 	dm_easy_mesh_t *dm = NULL;
+    dm_easy_mesh_t assoc_dm = *this;
 	em_cmd_t *tmp_cmd;
 	em_long_string_t wfa;	
 
@@ -3932,9 +3936,18 @@ int dm_easy_mesh_ctrl_t::analyze_remove_device(em_bus_event_t *evt, em_cmd_t *pc
         return 0;
 	}
 
-	for (i = 0; i < cJSON_GetArraySize(dev_list_obj); i++) {
+    int keep_list_size = cJSON_GetArraySize(dev_list_obj);
+    if (keep_list_size < 0 || keep_list_size > 32) {
+        cJSON_Delete(obj);
+        return 0;
+    }
+    for (i = 0; i < keep_list_size; i++) {
 		id_obj = cJSON_GetObjectItem(cJSON_GetArrayItem(dev_list_obj, i), "ID");
 		tmp = cJSON_GetStringValue(id_obj);
+        if (tmp == NULL) {
+            cJSON_Delete(obj);
+            return 0;
+        }
 		dm_easy_mesh_t::string_to_macbytes(tmp, dev_mac_to_keep[i]);
 	}
 
@@ -3942,28 +3955,78 @@ int dm_easy_mesh_ctrl_t::analyze_remove_device(em_bus_event_t *evt, em_cmd_t *pc
 
     cJSON_free(obj);
 
-	device = m_data_model_list.get_first_device();
-	while (device != NULL) {
-		for (i = 0; i < num_devs_to_keep; i++) {
-			if (memcmp(device->m_device_info.intf.mac, dev_mac_to_keep[i], sizeof(mac_address_t)) == 0) {
-				keep = true;
-				break;
-			}
-		}
+    device = m_data_model_list.get_first_device();
+    while (device != NULL) {
+        for (i = 0; i < num_devs_to_keep; i++) {
+            if (memcmp(device->m_device_info.intf.mac, dev_mac_to_keep[i], sizeof(mac_address_t)) == 0) {
+                keep = true;
+                break;
+            }
+        }
 
-		if (keep == true) {
-			keep = false;
-		} else {
-			devices_to_delete[num_devs_to_delete] = device;
-			num_devs_to_delete++;
-		}
-		device = m_data_model_list.get_next_device(device);
-	}
+        if (keep == true) {
+            keep = false;
+        } else {
+            if (num_devs_to_delete >= 32) {
+                em_printfout("RemoveDevice target count exceeds supported capacity");
+                return 0;
+            }
+            devices_to_delete[num_devs_to_delete] = device;
+            num_devs_to_delete++;
+        }
+        device = m_data_model_list.get_next_device(device);
+    }
+
+    for (i = 0; i < num_devs_to_delete; i++) {
+        device = devices_to_delete[i];
+        memcpy(backhaul_bssids[i], device->m_device_info.backhaul_mac.mac, sizeof(mac_address_t));
+        memcpy(backhaul_sta_macs[i], device->m_device_info.backhaul_sta, sizeof(mac_address_t));
+        dm = m_data_model_list.get_data_model(device->m_device_info.id.net_id, device->m_device_info.intf.mac);
+        if ((dm != NULL) &&
+                ((memcmp(backhaul_bssids[i], ZERO_MAC_ADDR, sizeof(mac_address_t)) == 0) ||
+                 (memcmp(backhaul_sta_macs[i], ZERO_MAC_ADDR, sizeof(mac_address_t)) == 0))) {
+            for (unsigned int bss_index = 0; bss_index < dm->get_num_bss(); bss_index++) {
+                em_bss_info_t *bss_info = &dm->m_bss[bss_index].m_bss_info;
+                if ((bss_info->vap_mode != em_vap_mode_sta) ||
+                        (bss_info->id.haul_type != em_haul_type_backhaul)) {
+                    continue;
+                }
+                if (memcmp(backhaul_bssids[i], ZERO_MAC_ADDR, sizeof(mac_address_t)) == 0) {
+                    memcpy(backhaul_bssids[i], bss_info->bssid.mac, sizeof(mac_address_t));
+                }
+                if (memcmp(backhaul_sta_macs[i], ZERO_MAC_ADDR, sizeof(mac_address_t)) == 0) {
+                    memcpy(backhaul_sta_macs[i], bss_info->sta_mac, sizeof(mac_address_t));
+                }
+                break;
+            }
+        }
+        if ((memcmp(backhaul_bssids[i], ZERO_MAC_ADDR, sizeof(mac_address_t)) != 0) &&
+                (memcmp(backhaul_sta_macs[i], ZERO_MAC_ADDR, sizeof(mac_address_t)) != 0)) {
+            num_backhaul_blocks++;
+        }
+    }
+
+    if ((num_devs_to_delete * 3 + num_backhaul_blocks) > EM_MAX_CMD) {
+        em_printfout("RemoveDevice exceeds command capacity: devices=%d backhaul blocks=%d",
+            num_devs_to_delete, num_backhaul_blocks);
+        return 0;
+    }
 
 	for (i = 0; i < num_devs_to_delete; i++) {
 		device = devices_to_delete[i];
 		dm_easy_mesh_t::macbytes_to_string(device->m_device_info.intf.mac, mac_str);
 		printf("%s:%d: Device: %s should be deleted\n", __func__, __LINE__, mac_str);	
+        if ((memcmp(backhaul_bssids[i], ZERO_MAC_ADDR, sizeof(mac_address_t)) != 0) &&
+                (memcmp(backhaul_sta_macs[i], ZERO_MAC_ADDR, sizeof(mac_address_t)) != 0)) {
+            em_cmd_client_assoc_params_t assoc_params = {};
+            memcpy(assoc_params.bssid, backhaul_bssids[i], sizeof(bssid_t));
+            assoc_params.assoc_control = ASSOC_CONTROL_BLOCK;
+            assoc_params.sta_count = 1;
+            memcpy(assoc_params.sta_list[0], backhaul_sta_macs[i], sizeof(mac_address_t));
+            pcmd[num] = new em_cmd_client_assoc_ctrl_req_t(assoc_params, assoc_dm, em_service_type_ctrl);
+            num++;
+        }
+
 		dm = m_data_model_list.get_data_model(device->m_device_info.id.net_id, device->m_device_info.intf.mac);
 		if (dm != NULL) {
     		pcmd[num] = new em_cmd_remove_device_t(evt->params, *dm);
@@ -4051,15 +4114,15 @@ int dm_easy_mesh_ctrl_t::set_radio_cap_list(cJSON *radio_cap_list_obj, mac_addre
     return 0;
 }
 
-int dm_easy_mesh_ctrl_t::set_bss_list(cJSON *bss_list_obj, mac_address_t *radio_mac)
+int dm_easy_mesh_ctrl_t::set_bss_list(cJSON *bss_list_obj, mac_address_t *dev_mac, mac_address_t *radio_mac)
 {
-    dm_bss_list_t::set_config(m_db_client, bss_list_obj, radio_mac);
-    return 0;
+    return dm_bss_list_t::set_config(m_db_client, bss_list_obj, dev_mac, radio_mac);
 }
 
 int dm_easy_mesh_ctrl_t::set_radio_list(cJSON *radio_list_obj, mac_address_t *dev_mac)
 {
     int i, num;
+    int rc = 0;
     cJSON *obj, *radio_obj, *bss_list_obj, *op_class_list_obj, *radio_cap_list_obj;
     mac_address_t radio_mac;
 
@@ -4075,7 +4138,10 @@ int dm_easy_mesh_ctrl_t::set_radio_list(cJSON *radio_list_obj, mac_address_t *de
             //printf("%s:%d: BSSList for radio[%d]: %s\n", __func__, __LINE__, i, cJSON_GetStringValue(obj));
 
             if ((bss_list_obj = cJSON_GetObjectItem(radio_obj, "BSSList")) != NULL) {
-                set_bss_list(bss_list_obj, &radio_mac);
+                if (set_bss_list(bss_list_obj, dev_mac, &radio_mac) != 0) {
+                    em_printfout("Failed to persist BSSList for radio %s", cJSON_GetStringValue(obj));
+                    rc = -1;
+                }
             }
 
             if ((op_class_list_obj = cJSON_GetObjectItem(radio_obj, "CurrentOperatingClasses")) != NULL) {
@@ -4089,12 +4155,13 @@ int dm_easy_mesh_ctrl_t::set_radio_list(cJSON *radio_list_obj, mac_address_t *de
         }
     }
 
-    return 0;
+    return rc;
 }
 
 int dm_easy_mesh_ctrl_t::set_device_list(cJSON *dev_list_obj)
 {
     int i, num;
+    int rc = 0;
     cJSON *obj, *dev_obj, *radio_list_obj;
     mac_address_t dev_mac;
 
@@ -4108,11 +4175,14 @@ int dm_easy_mesh_ctrl_t::set_device_list(cJSON *dev_list_obj)
             obj = cJSON_GetObjectItem(dev_obj, "ID");
             dm_easy_mesh_t::string_to_macbytes(cJSON_GetStringValue(obj), dev_mac);
             //printf("%s:%d: RadioList for device[%d]: %s\n", __func__, __LINE__, i, cJSON_GetStringValue(obj));
-            set_radio_list(radio_list_obj, &dev_mac);
+            if (set_radio_list(radio_list_obj, &dev_mac) != 0) {
+                em_printfout("Failed to persist radio configuration for device %s", cJSON_GetStringValue(obj));
+                rc = -1;
+            }
         }
     }
 
-    return 0;
+    return rc;
 }
 
 int dm_easy_mesh_ctrl_t::reset_config()
@@ -4834,7 +4904,6 @@ int dm_easy_mesh_ctrl_t::update_tables(dm_easy_mesh_t *dm)
 			dm_easy_mesh_t::macbytes_to_string(bss.m_bss_info.bssid.mac, bssid_str);
 			snprintf(parent, sizeof(em_2xlong_string_t), "%s@%s@%s@%s@%d", dm->m_network.m_net_info.id, 
 					dev_mac_str, radio_mac_str, bssid_str, bss.m_bss_info.id.haul_type);
-            em_printfout("BSS[%d] Parent ID: %s\n", i, parent);
 			criteria = dm->db_cfg_type_get_criteria(db_cfg_type_bss_list_update);
             if (dm_bss_list_t::set_config(m_db_client, bss, parent) != 0) {
                 at_least_one_failed = true;

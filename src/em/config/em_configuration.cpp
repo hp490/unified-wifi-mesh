@@ -1272,6 +1272,7 @@ int em_configuration_t::create_vendor_operational_bss_tlv(unsigned char *buff)
             memcpy(bss->bssid, dm->m_bss[bss_index].m_bss_info.bssid.mac, sizeof(mac_address_t));
             bss->haultype = static_cast<short unsigned int>(dm->m_bss[bss_index].m_bss_info.id.haul_type);
             bss->vap_mode = static_cast<short unsigned int>(dm->m_bss[bss_index].m_bss_info.vap_mode);
+            bss->mac_filter_mode = dm->m_bss[bss_index].m_bss_info.acl_filter_mode;
             bss = reinterpret_cast<em_ap_vendor_operational_bss_t *>(reinterpret_cast<unsigned char *>(bss) + sizeof(em_ap_vendor_operational_bss_t));
             all_bss_len += sizeof(em_ap_vendor_operational_bss_t);
         }
@@ -1301,6 +1302,16 @@ void em_configuration_t::print_ap_vendor_operational_bss_tlv(unsigned char *valu
 		bss = radio->bss;
 		em_printfout("Number of bss: %d", radio->bss_num);
 		for (j = 0; j < radio->bss_num; j++) {
+            if ((bss->vap_mode != em_vap_mode_ap) || (bss->haultype >= em_haul_type_max) ||
+                    (memcmp(bss->bssid, ZERO_MAC_ADDR, sizeof(mac_address_t)) == 0) ||
+                    (memcmp(radio->ruid, ZERO_MAC_ADDR, sizeof(mac_address_t)) == 0)) {
+                em_printfout("Skipping invalid AP BSS in vendor TLV: BSSID=%s haul_type=%u vap_mode=%u",
+                        util::mac_to_string(bss->bssid).c_str(), bss->haultype, bss->vap_mode);
+                bss = reinterpret_cast<em_ap_vendor_operational_bss_t *>(
+                        reinterpret_cast<unsigned char *>(bss) + sizeof(em_ap_vendor_operational_bss_t));
+                all_bss_len += sizeof(em_ap_vendor_operational_bss_t);
+                continue;
+            }
 			dm_easy_mesh_t::macbytes_to_string(bss->bssid, bss_mac_str);
 			em_printfout("BSSID=%s haul type=%d vap_mode:%d", bss_mac_str, bss->haultype, bss->vap_mode);
 			bss = reinterpret_cast<em_ap_vendor_operational_bss_t *> (reinterpret_cast<unsigned char *> (bss) + sizeof(em_ap_vendor_operational_bss_t));
@@ -1347,6 +1358,10 @@ void em_configuration_t::handle_ap_vendor_operational_bss(unsigned char *value, 
 			memcpy(dm_bss->m_bss_info.bssid.mac, bss->bssid, sizeof(mac_address_t));
 			dm_bss->m_bss_info.id.haul_type = static_cast<em_haul_type_t> (bss->haultype);
 			dm_bss->m_bss_info.vap_mode = static_cast<em_vap_mode_t> (bss->vap_mode);
+            if (dm_bss->m_bss_info.vap_mode == em_vap_mode_ap) {
+                dm_bss->m_bss_info.acl_filter_mode = (bss->mac_filter_mode == EM_ACL_MODE_WHITELIST) ?
+                        EM_ACL_MODE_WHITELIST : EM_ACL_MODE_BLACKLIST;
+            }
 
 			bss = reinterpret_cast<em_ap_vendor_operational_bss_t *>(reinterpret_cast<unsigned char *> (bss) + sizeof(em_ap_vendor_operational_bss_t));
 			all_bss_len += sizeof(em_ap_vendor_operational_bss_t);
@@ -1355,6 +1370,7 @@ void em_configuration_t::handle_ap_vendor_operational_bss(unsigned char *value, 
 		radio = reinterpret_cast<em_ap_vendor_op_bss_radio_t *>(reinterpret_cast<unsigned char *> (radio) + sizeof(em_ap_vendor_op_bss_radio_t) + all_bss_len);
 		all_bss_len = 0;
 	}
+
 }
 
 int em_configuration_t::create_tid_to_link_map_policy_tlv(unsigned char *buff)
@@ -2257,19 +2273,6 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
         //return -1;
     }       
         
-    tlv =  reinterpret_cast<em_tlv_t *> (buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
-    tmp_len = len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
-
-	while ((tlv->type != em_tlv_type_eom) && (tmp_len > 0)) {
-		if (tlv->type != em_tlv_type_vendor_operational_bss) {
-			tmp_len -= static_cast<unsigned int> (sizeof(em_tlv_t) + htons(tlv->len));
-			tlv = reinterpret_cast<em_tlv_t *> (reinterpret_cast<unsigned char *> (tlv) + sizeof(em_tlv_t) + htons(tlv->len));
-			continue;
-		} else {
-			handle_ap_vendor_operational_bss(tlv->value, tlv->len);
-			break;
-		}
-	}
 	tlv =  reinterpret_cast<em_tlv_t *> (buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
 	tmp_len = len - static_cast<unsigned int> (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)); 
     while ((tlv->type != em_tlv_type_eom) && (tmp_len > 0)) {
@@ -2301,6 +2304,17 @@ int em_configuration_t::handle_topology_response(unsigned char *buff, unsigned i
             }
             return rc;
         }
+    tlv = reinterpret_cast<em_tlv_t *>(buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
+    tmp_len = len - static_cast<unsigned int>(sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
+    while ((tlv->type != em_tlv_type_eom) && (tmp_len > 0)) {
+        if (tlv->type != em_tlv_type_vendor_operational_bss) {
+            tmp_len -= static_cast<unsigned int>(sizeof(em_tlv_t) + htons(tlv->len));
+            tlv = reinterpret_cast<em_tlv_t *>(reinterpret_cast<unsigned char *>(tlv) + sizeof(em_tlv_t) + htons(tlv->len));
+            continue;
+        }
+        handle_ap_vendor_operational_bss(tlv->value, tlv->len);
+        break;
+    }
 
 
     while ((tlv->type != em_tlv_type_eom) && (tmp_len > 0)) {
@@ -6486,8 +6500,14 @@ void em_configuration_t::process_agent_state()
 void em_configuration_t::process_ctrl_state()
 {
     dm_easy_mesh_t *dm = get_data_model();
+    em_state_t state = get_state();
 
-    switch (get_state()) {
+    if (state == em_state_ctrl_topo_publish_pending) {
+        em_printfout("topo_publish dispatch: radio=%s state=%d topo_state=%d",
+            util::mac_to_string(get_radio_interface_mac()).c_str(), state, dm->get_topo_state());
+    }
+
+    switch (state) {
         case em_state_ctrl_misconfigured:
             send_autoconfig_renew_msg();
             break;
@@ -6549,10 +6569,15 @@ void em_configuration_t::process_ctrl_state()
                 get_mgr()->publish_network_topology();
             }
             set_state(em_state_ctrl_configured);
+            em_printfout("topo_publish complete: radio=%s state=%d",
+                util::mac_to_string(get_radio_interface_mac()).c_str(), get_state());
             break;
 
         default:
-            em_printfout("unhandled state:%s in config state machine.", em_t::state_2_str(get_state()));
+            em_state_t current_state = get_state();
+            em_printfout("unhandled config state: entry=%d(%s) current=%d(%s) radio=%s",
+                state, em_t::state_2_str(state), current_state, em_t::state_2_str(current_state),
+                util::mac_to_string(get_radio_interface_mac()).c_str());
             break;
     }
 

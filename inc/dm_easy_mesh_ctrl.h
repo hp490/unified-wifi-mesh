@@ -232,7 +232,7 @@ private:
 	 *
 	 * @note Ensure that the bss_list_obj is properly formatted and radio_mac is valid before calling this function.
 	 */
-	int set_bss_list(cJSON *bss_list_obj, mac_address_t *radio_mac);
+	int set_bss_list(cJSON *bss_list_obj, mac_address_t *dev_mac, mac_address_t *radio_mac);
     
 	/**!
 	 * @brief Sets the operational class list for a given radio MAC address.

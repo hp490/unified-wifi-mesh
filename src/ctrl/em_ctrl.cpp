@@ -39,6 +39,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <cjson/cJSON.h>
+#include <execinfo.h>
 #include "em.h"
 #include "em_msg.h"
 #include "em_ctrl.h"
@@ -944,7 +945,7 @@ void em_ctrl_t::publish_network_topology()
         printf("%s:%d cJSON_CreateObject failed\n", __func__, __LINE__);
         return;
     }
-    dm_ctrl = reinterpret_cast<dm_easy_mesh_ctrl_t *>(get_data_model(GLOBAL_NET_ID));
+    dm_ctrl = get_dm_ctrl();
     if (dm_ctrl == NULL) {
         printf("%s:%d data model is null\n", __func__, __LINE__);
         cJSON_Delete(parent);
@@ -1064,6 +1065,7 @@ int em_ctrl_t::data_model_init(const char *data_model_path)
         if ((em = create_node(intf, em_freq_band_unknown, dm, true, em_profile_type_3, em_service_type_ctrl)) == NULL) {
             printf("%s:%d: Could not create and start abstraction layer interface\n", __func__, __LINE__);
         }
+
     }
 
     return 0;
@@ -1560,13 +1562,9 @@ em_ctrl_t::~em_ctrl_t()
 #ifdef AL_SAP
 AlServiceAccessPoint* em_ctrl_t::al_sap_register(const std::string& data_socket_path, const std::string& control_socket_path)
 {
-    AlServiceAccessPoint* sap = NULL;
+    AlServiceAccessPoint* sap = nullptr;
     try {
         sap = new AlServiceAccessPoint(data_socket_path.c_str(), control_socket_path.c_str());
-	if (NULL == sap) {
-            em_printfout("%s-%d: Failed to allocate AlServiceAccessPoint", __func__, __LINE__);
-            return NULL;
-        }
 
         AlServiceRegistrationRequest registrationRequest(SAPActivation::SAP_ENABLE, ServiceType::EmController);
         sap->serviceAccessPointRegistrationRequest(registrationRequest);
@@ -1577,28 +1575,28 @@ AlServiceAccessPoint* em_ctrl_t::al_sap_register(const std::string& data_socket_
         if (result == RegistrationResult::SUCCESS) {
             g_al_mac_sap = registrationResponse.getAlMacAddressLocal();
             uint8_t* al_mac_bytes = g_al_mac_sap.data();
-            if (NULL == al_mac_bytes) {
-                em_printfout("%s-%d: AL SAP registration failed with invalid AL MAC: %s", util::mac_to_string(al_mac_bytes).c_str());
-                delete sap;
-		return NULL;
-            }
             em_printfout("AL SAP registration successful, AL MAC: %s", util::mac_to_string(al_mac_bytes).c_str());
             m_data_model.set_dev_interface_mac(al_mac_bytes);
         } else {
-            std::cout << "Registration failed with error: " << static_cast<int>(result) << std::endl;
-	    delete sap;
-	    return NULL;
+            em_printfout("Registration failed with error: %d, data socket: %s, control socket: %s",
+                         static_cast<int>(result),
+                         data_socket_path.c_str(),
+                         control_socket_path.c_str());
+            delete sap;
+            return nullptr;
         }
     }
     catch (const AlServiceException& e) {
-        em_printfout("%s-%d: AL SAP registration exception %s", __func__, __LINE__, e.what());
+        em_printfout("AL SAP registration exception: %s, data socket: %s, control socket: %s",
+                     e.what(), data_socket_path.c_str(), control_socket_path.c_str());
         delete sap;
-        return NULL;
+        return nullptr;
     }
-    catch (const std::exception e) {
-        em_printfout("%s-%d: Unknown exception %s during AL SAP registration", __func__, __LINE__, e.what());
+    catch (const std::exception& e) {
+        em_printfout("Unknown exception: %s during AL SAP registration, data socket: %s, control socket: %s",
+                     e.what(), data_socket_path.c_str(), control_socket_path.c_str());
         delete sap;
-        return NULL;
+        return nullptr;
     }
 
     return sap;
@@ -1607,33 +1605,48 @@ AlServiceAccessPoint* em_ctrl_t::al_sap_register(const std::string& data_socket_
 
 
 #ifndef TESTING
+static void em_ctrl_fatal_signal_handler(int signum)
+{
+    void *frames[32];
+    int num_frames = backtrace(frames, 32);
+
+    fprintf(stderr, "\n==== onewifi_em_ctrl caught signal %d (%s), %d frames ====\n",
+            signum, strsignal(signum), num_frames);
+    fflush(stderr);
+
+    backtrace_symbols_fd(frames, num_frames, fileno(stderr));
+    fprintf(stderr, "==== end backtrace ====\n");
+    fflush(stderr);
+
+    // Re-raise with the default handler so a core is still produced
+    signal(signum, SIG_DFL);
+    raise(signum);
+}
+
 int main(int argc, const char *argv[])
 {
+    // Block-buffered stdout loses every printf() since the last flush when the process crashes
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
+    signal(SIGSEGV, em_ctrl_fatal_signal_handler);
+    signal(SIGABRT, em_ctrl_fatal_signal_handler);
+    signal(SIGBUS, em_ctrl_fatal_signal_handler);
+    signal(SIGFPE, em_ctrl_fatal_signal_handler);
+
     em_ctrl_t  *em_ctrl = em_ctrl_t::get_em_ctrl_instance();
 #ifdef AL_SAP
     const char* data_socket_path = "/tmp/al_em_ctrl_data_socket";
     const char* control_socket_path = "/tmp/al_em_ctrl_control_socket";
-
-    if(0 == access(data_socket_path, F_OK) && 0 == access(control_socket_path, F_OK)) {
-        g_sap = em_ctrl->al_sap_register(data_socket_path, control_socket_path);
-        if (NULL == g_sap) {
-            em_printfout("%s-%d: Error in AL SAP registration, exiting", __func__, __LINE__);
-            return -1;
-        }
-    }
-    else {
-        em_printfout("%s-%d: Data Socket: %s, Control Socket: %s", __func__, __FILE__,
-	              access(data_socket_path, F_OK) == 0 ? "present" : "missing",
-                      access(control_socket_path, F_OK) == 0 ? "present" : "missing");
-        em_printfout("%s-%d: Required AL SAP socket(s) not available, exiting", __func__, __LINE__);
+    g_sap = em_ctrl->al_sap_register(data_socket_path, control_socket_path);
+    if (nullptr == g_sap) {
+        em_printfout("Error in AL SAP registration, exiting");
         return -1;
     }
 #endif
-
-    if (em_ctrl->init(argv[1]) == 0) {
+    int init_rc = em_ctrl->init(argv[1]);
+    if (init_rc == 0) {
         em_ctrl->start();
     }
-
     return 0;
 }
 

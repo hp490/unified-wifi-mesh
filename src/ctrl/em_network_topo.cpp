@@ -73,7 +73,7 @@ void em_network_topo_t::encode(cJSON *parent)
 				    cJSON_AddNumberToObject(bss_obj, "VlanID", network_ssid_info->vlan_id);
 				}
 				sta_list_obj = cJSON_AddArrayToObject(bss_obj, "STAList");
-				dm_easy_mesh_ctrl_t *dm_ctrl = reinterpret_cast<dm_easy_mesh_ctrl_t *>(em_ctrl_t::get_em_ctrl_instance()->get_data_model(GLOBAL_NET_ID));
+				dm_easy_mesh_ctrl_t *dm_ctrl = em_ctrl_t::get_em_ctrl_instance()->get_dm_ctrl();
 				if (dm_ctrl != NULL) {
 					// Get the Station associated with this bss only if vap mode is ap
 					if (m_data_model->m_bss[j].m_bss_info.vap_mode == em_vap_mode_ap) {
