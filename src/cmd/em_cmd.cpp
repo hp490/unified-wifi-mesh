@@ -616,6 +616,7 @@ const char *em_cmd_t::get_orch_op_str(dm_orch_type_t type)
         ORCH_TYPE_2S(dm_orch_type_unassoc_sta_link_req_query)
 	ORCH_TYPE_2S(dm_orch_type_unassoc_sta_result)
         ORCH_TYPE_2S(dm_orch_type_client_assoc)
+        ORCH_TYPE_2S(dm_orch_type_acl_cfg)
 
         default:
            break;
