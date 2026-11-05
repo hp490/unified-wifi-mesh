@@ -37,6 +37,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <openssl/rand.h>
+#include <memory>
 #include <vector>
 #include "em.h"
 #include "em_msg.h"
@@ -68,7 +69,8 @@ int em_steering_t::send_client_assoc_ctrl_req_msg()
 
     for (unsigned int j = 0; j < dm->m_num_bss; j++) {
         if ((memcmp(assoc_param->bssid, dm->m_bss[j].m_bss_info.bssid.mac, sizeof(mac_address_t)) == 0) &&
-         (memcmp(dm->m_bss[j].m_bss_info.ruid.mac, get_radio_interface_mac(), sizeof(mac_address_t)) == 0)) {
+         (memcmp(dm->m_bss[j].m_bss_info.ruid.mac, get_radio_interface_mac(), sizeof(mac_address_t)) == 0) &&
+         (dm->m_bss[j].m_bss_info.vap_mode == em_vap_mode_ap)) {
 
             em_client_assoc_ctrl_req_t assoc_ctrl;
             memset(&assoc_ctrl, 0, sizeof(assoc_ctrl));
@@ -87,6 +89,29 @@ int em_steering_t::send_client_assoc_ctrl_req_msg()
     }
 
     return 0;
+}
+
+int em_steering_t::send_persisted_assoc_ctrl_req(const unsigned char *bssid, unsigned char assoc_control,
+            unsigned short validity_period, unsigned char sta_count, const mac_address_t *sta_list)
+{
+    em_client_assoc_ctrl_req_t assoc_ctrl;
+
+    if ((bssid == NULL) || (sta_list == NULL) || (sta_count == 0) || (sta_count > MAX_STA_LIST)) {
+        return -1;
+    }
+
+    if ((assoc_control != ASSOC_CONTROL_BLOCK) && (assoc_control != ASSOC_CONTROL_UNBLOCK)) {
+        return -1;
+    }
+
+    memset(&assoc_ctrl, 0, sizeof(assoc_ctrl));
+    memcpy(assoc_ctrl.bssid, bssid, sizeof(bssid_t));
+    assoc_ctrl.assoc_control = assoc_control;
+    assoc_ctrl.validity_period = htons(validity_period);
+    assoc_ctrl.sta_count = sta_count;
+    memcpy(assoc_ctrl.sta_list, sta_list, static_cast<size_t> (sta_count) * sizeof(mac_address_t));
+
+    return send_client_assoc_ctrl_req_msg(&assoc_ctrl);
 }
 
 int em_steering_t::send_client_assoc_ctrl_req_msg(em_client_assoc_ctrl_req_t *assoc_ctrl)
@@ -707,6 +732,82 @@ int em_steering_t::handle_client_assoc_ctrl_req(unsigned char *buff, unsigned in
     return 0;
 }
 
+int em_steering_t::send_acl_list(const char *bss_key, const unsigned char *bssid,
+            unsigned short validity_period, bool blocked)
+{
+    // A BSS holds at most EM_MAX_ACL_JSON_STAS entries: take them in one pass (a consistent
+    // snapshot, no rescan per chunk), on the heap as this runs on the em thread
+    std::unique_ptr<mac_address_t[]> macs(new mac_address_t[EM_MAX_ACL_JSON_STAS]);
+    std::vector<unsigned short> remaining(EM_MAX_ACL_JSON_STAS);
+    unsigned int num, i, start, end;
+    unsigned char control = blocked ? ASSOC_CONTROL_BLOCK : ASSOC_CONTROL_UNBLOCK;
+
+    // Expired timed blocks are not returned; a timed block is replayed with only its remaining
+    // time, so a re-onboarding never restarts the full period.
+    num = get_mgr()->get_bss_acl_macs(bss_key, blocked, 0, EM_MAX_ACL_JSON_STAS, macs.get(),
+            remaining.data());
+
+    // The Client Association Control TLV carries at most MAX_STA_LIST STAs and a single period,
+    // so send one request per run of at most MAX_STA_LIST STAs sharing the same period
+    for (start = 0; start < num; start = i) {
+        unsigned short period = blocked ? remaining[start] : validity_period;
+        end = ((num - start) > MAX_STA_LIST) ? (start + MAX_STA_LIST) : num;
+        i = start + 1;
+        while ((i < end) && (!blocked || (remaining[i] == period))) {
+            i++;
+        }
+        if (send_persisted_assoc_ctrl_req(bssid, control, period,
+                static_cast<unsigned char> (i - start), &macs[start]) <= 0) {
+            em_printfout("Failed sending %s ACL chunk for BSS %s at STA offset %u",
+                    blocked ? "blocked" : "allowed", bss_key, start);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+int em_steering_t::send_persisted_acl_cfg()
+{
+    dm_easy_mesh_t *dm = get_data_model();
+    em_2xlong_string_t bss_key;
+
+    if (dm == NULL) {
+        em_printfout("Cannot send persisted ACL configuration: data model is unavailable");
+        return -1;
+    }
+
+    for (unsigned int i = 0; i < dm->m_num_bss; i++) {
+        em_bss_info_t *info = &dm->m_bss[i].m_bss_info;
+
+        if ((memcmp(info->ruid.mac, get_radio_interface_mac(), sizeof(mac_address_t)) != 0) ||
+                (info->vap_mode != em_vap_mode_ap)) {
+            continue;
+        }
+
+        dm_bss_t::make_bss_key(info, bss_key, sizeof(bss_key));
+
+        // Whitelist (backhaul): only the allowed list is meaningful, permanent (validity 0).
+        // Blacklist (fronthaul): only the blocked list is meaningful, with its validity period.
+        // A mode not known yet (row from an older build) follows the haul type, as CACR persistence does.
+        bool whitelist = (info->acl_filter_mode == EM_ACL_MODE_WHITELIST) ||
+                ((info->acl_filter_mode == EM_ACL_MODE_UNKNOWN) && (info->id.haul_type == em_haul_type_backhaul));
+        if (whitelist) {
+            // Until this allowed list reaches the agent, its whitelist BSS denies every child
+            // STA (including after a VAP recreate), so log the start of that window.
+            em_printfout("Sending persisted allowed list to whitelist BSS %s; children are denied until it completes",
+                    bss_key);
+            if (send_acl_list(bss_key, info->bssid.mac, 0, false) != 0) {
+                return -1;
+            }
+        } else if (send_acl_list(bss_key, info->bssid.mac, 0, true) != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 void em_steering_t::process_ctrl_state()
 {
     switch (get_state()) {
@@ -717,6 +818,16 @@ void em_steering_t::process_ctrl_state()
         case em_state_ctrl_client_assoc_ctrl_req_pending:
             send_client_assoc_ctrl_req_msg();
             break;
+
+        case em_state_ctrl_acl_cfg_pending:
+            if (send_persisted_acl_cfg() != 0) {
+                em_printfout("Persisted ACL configuration failed; child agents behind this agent remain denied until it is re-sent");
+                set_state(em_state_ctrl_acl_cfg_failed);
+                break;
+            }
+            set_state(em_state_ctrl_acl_cfg_configured);
+            break;
+
         default:
             break;
     }

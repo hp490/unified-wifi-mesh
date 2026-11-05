@@ -1355,6 +1355,14 @@ public:
 	 */
 	em_bss_info_t* get_bsta_bss_info();
 
+	/**!
+	 * @brief Agent side: takes a pending bSTA reconnect after a backhaul reconfig and, when the
+	 * agent re-onboards over its bSTA, opens the "dml" -> dev_init window.
+	 *
+	 * @returns true if the caller must push the MESH STA CONFIG subdoc.
+	 */
+	bool take_bsta_reconnect();
+
 
 	/**!
 	 * @brief Retrieves the `em_bss_info_t` for the backhaul BSS.
@@ -2740,7 +2748,43 @@ public:
 	 *
 	 * @note Ensure that all resources are properly released before the object is destroyed.
 	 */
-	virtual ~dm_easy_mesh_t();  
+	virtual ~dm_easy_mesh_t();
+
+	bool m_cfg_renew_in_progress = false;
+	// Agent side: the bSTAs got new credentials from an M8 and still need the MESH STA CONFIG push
+	bool m_bsta_reconnect_pending = false;
+	// Agent side: backhaul credentials of the last M8, waiting for that push
+	ssid_t m_bsta_new_ssid = {};
+	em_long_string_t m_bsta_new_passphrase = {};
+	// Agent side: a bSTA was the backhaul when the M8 came, so the agent re-onboards after the push
+	bool m_bsta_reconnect_reonboards = false;
+	// Agent side: M2 configurations queued by the em threads but not yet applied by the agent
+	// thread; cfg_renew does not finish before they are, so the bSTA push sees every M8.
+	unsigned int m_m2ctrl_pending = 0;
+	// Controller side, set per SetBhCfg phase: this agent's bSTA hangs off a parent BSS (wireless
+	// backhaul), so after the M2 with the M8 it drops its bSTA and re-onboards by itself.
+	bool m_bh_reconfig_reonboards = false;
+	// Agent side: monotonic time (s) of the last backhaul-reconfig M2/M8, 0 = none. OneWifi
+	// "dml" pushes re-run dev_init (re-onboarding) only within a window after it.
+	time_t m_bh_reconfig_time = 0;
+
+	/**!
+	 * @brief Whether a "dml" push still re-runs the onboarding after a backhaul reconfig.
+	 *
+	 * A leaf reconnects only once its parent switched, and every level of the tree can take up
+	 * to three 40 s phases, so the window is wide. An expired window closes for good.
+	 */
+	bool bh_reconfig_window_open();
+	// Controller side: this agent was reconfigured (M8 sent) in the current backhaul reconfig.
+	// Kept on the data model, which survives the agent's re-onboarding, so a topology node that
+	// is re-created meanwhile does not make the agent a candidate (and get an M8) again.
+	bool m_bh_reconfig_processed = false;
+	// Controller side: phases in which this agent was a candidate but no M2 went out. Kept on the
+	// data model for the same reason as m_bh_reconfig_processed.
+	unsigned int m_bh_reconfig_fail_count = 0;
+	// Controller side, per SetBhCfg phase: this agent's candidate radios hosting a backhaul AP
+	// that have not had their M2 yet; it counts as reconfigured only once this is 0
+	unsigned int m_bh_reconfig_bh_radios_left = 0;
 };
 
 #endif

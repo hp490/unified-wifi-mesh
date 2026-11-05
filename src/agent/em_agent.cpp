@@ -34,6 +34,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <cjson/cJSON.h>
+#include "util.h"
 #include "em_agent.h"
 #include "em_ext_hooks.h"
 #include "em_msg.h"
@@ -254,12 +255,16 @@ void em_agent_t::handle_m2ctrl_configuration(em_bus_event_t *evt)
 
     if((desc = get_bus_descriptor()) == NULL) {
        printf("descriptor is null");
-    }
-
-    if (m_orch->is_cmd_type_in_progress(evt) == true) {
+    } else if (m_orch->is_cmd_type_in_progress(evt) == true) {
         m_agent_cmd->send_result(em_cmd_out_status_prev_cmd_in_progress);
     } else if ((num = static_cast<unsigned int>(m_data_model.analyze_m2ctrl_configuration(evt, desc, &m_bus_hdl))) == 0) {
 	    printf("analyze_onewifi_private_subdoc complete");
+    }
+
+    // Queued by the em thread (em_configuration_t::handle_autoconfig_wsc_m2): done with it, applied or not
+    unsigned int pending = __atomic_load_n(&m_data_model.m_m2ctrl_pending, __ATOMIC_ACQUIRE);
+    while ((pending != 0) && !__atomic_compare_exchange_n(&m_data_model.m_m2ctrl_pending, &pending,
+            pending - 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
     }
 }
 
@@ -1408,6 +1413,7 @@ void em_agent_t::handle_vendor_data(em_bus_event_t *evt)
     }
 }
 
+
 void em_agent_t::handle_bus_event(em_bus_event_t *evt)
 {   
 
@@ -1415,6 +1421,18 @@ void em_agent_t::handle_bus_event(em_bus_event_t *evt)
         case em_bus_event_type_dev_init:
             handle_dev_init(evt);
             break;
+        case em_bus_event_type_onewifi_dml_cb: {
+            // After a backhaul reconfig the bSTA reconnects with new credentials and OneWifi pushes
+            // "dml"; that re-runs dev_init so the extender re-onboards. Outside that window a "dml"
+            // push must not restart onboarding on a healthy agent.
+            if (m_data_model.bh_reconfig_window_open()) {
+                evt->type = em_bus_event_type_dev_init;
+                handle_dev_init(evt);
+            } else {
+                em_printfout("Ignoring dml subdoc: no backhaul reconfig in progress");
+            }
+            break;
+        }
         case em_bus_event_type_cfg_renew:
             handle_autoconfig_renew(evt);
             break;
@@ -1841,7 +1859,8 @@ void em_agent_t::input_listener()
             }
         }
     }
-    em_printfout("Received data:\r\n%s\r\n", reinterpret_cast<char *>(data.raw_data.bytes));
+    // Never log the subdoc itself: it carries passphrases
+    em_printfout("Received data: %u bytes", static_cast<unsigned int>(data.raw_data_len));
 
     g_agent.io_process(em_bus_event_type_dev_init, reinterpret_cast<unsigned char *>(data.raw_data.bytes), data.raw_data_len);
     free(data.raw_data.bytes);
@@ -2178,8 +2197,12 @@ void em_agent_t::onewifi_cb(char *event_name, bus_data_prop_t *data, void *userD
                (strcmp(subdoc_name->valuestring, "mesh backhaul sta") == 0)) {
         g_agent.io_process(em_bus_event_type_onewifi_mesh_sta_cb, reinterpret_cast<unsigned char *>(data->value.raw_data.bytes), data->value.raw_data_len);
 
+    } else if (strcmp(subdoc_name->valuestring, "dml") == 0) {
+        // Checked on the main thread (handle_bus_event), where the reconfig window is opened and closed
+        g_agent.io_process(em_bus_event_type_onewifi_dml_cb, reinterpret_cast<unsigned char *>(data->value.raw_data.bytes), data->value.raw_data_len);
+
     } else {
-        em_printfout("SubDocName (%s) not matching private, mesh_sta, or radio", subdoc_name->valuestring);
+        em_printfout("SubDocName (%s) not matching private, mesh_sta, radio, or dml", subdoc_name->valuestring);
     }
 
     cJSON_Delete(json);

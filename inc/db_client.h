@@ -81,13 +81,15 @@ std::mutex m_mutex;
 	  * This function takes a SQL query as input and executes it on the connected database.
 	  *
 	  * @param[in] query SQL query to execute. This should be a valid SQL statement.
+	  * @param[out] succeeded Optional; set to true when the statement ran (done or row). It is
+	  *             set under the connection lock, so concurrent queries cannot overwrite it.
 	  *
 	  * @returns Pointer to result context on success, NULL on failure.
 	  *
 	  * @note Caller is responsible for handling the returned result context.
 	  *       The context will be automatically freed when next_result() returns false.
 	  */
-	 void *execute(const char *query);
+	 void *execute(const char *query, bool *succeeded = NULL);
 
 
 	 /**!
@@ -138,7 +140,17 @@ std::mutex m_mutex;
 	  */
 	 char *get_string(void *ctx, char *res, unsigned int col);
 
-
+	 /**!
+	  * @brief Retrieve a string value, bounded by the destination buffer size.
+	  *
+	  * @param[in] ctx Result context from which the string is retrieved.
+	  * @param[out] res Buffer to store the retrieved string.
+	  * @param[in] col Column index from which to retrieve the string (1-based).
+	  * @param[in] res_sz Size of res; 0 means bound only by the database field length.
+	  *
+	  * @returns Pointer to the result buffer containing the string, or NULL on error.
+	  */
+	 char *get_string(void *ctx, char *res, unsigned int col, unsigned int res_sz);
 	 /**!
 	  * @brief Retrieve an integer value from the result context.
 	  *

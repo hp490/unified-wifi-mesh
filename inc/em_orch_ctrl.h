@@ -21,6 +21,8 @@
 
 #include "em_orch.h"
 
+class dm_easy_mesh_ctrl_t;
+
 class em_orch_ctrl_t : public em_orch_t {
 
 public:
@@ -106,6 +108,13 @@ public:
 	 * @note Ensure that the command structure and em state are properly initialized before calling this function.
 	 */
 	void orch_transient(em_cmd_t *pcmd, em_t *em);
+
+	/**!
+	 * @brief Ends one backhaul reconfig phase: counts agents that got no M2 and starts the next phase.
+	 *
+	 * @param[in] pcmd Pointer to the finished command.
+	 */
+	void on_cmd_fini(em_cmd_t *pcmd);
 
 public:
     

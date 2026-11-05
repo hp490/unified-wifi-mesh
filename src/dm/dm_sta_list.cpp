@@ -197,7 +197,7 @@ bool dm_sta_list_t::operator == (const db_easy_mesh_t& obj)
 int dm_sta_list_t::update_row(db_client_t& db_client, ...)
 {
     unsigned int i;
-    db_query_t  tmp, format, query;
+    db_query_t  tmp, format;
     va_list list;
     db_fmt_t    col_fmt;
     void *ctx;
@@ -229,14 +229,18 @@ int dm_sta_list_t::update_row(db_client_t& db_client, ...)
         em_printfout("update_row called for DB update other than STAList table updation");
     }
 
+    // The column formats are for sqlite3_vmprintf: %Q escapes the text values
     va_start(list, db_client);
-    (void) vsnprintf(query, sizeof(db_query_t), format, list);
+    char *query = sqlite3_vmprintf(format, list);
     va_end(list);
 
-    //printf("%s:%d: Query: %s\n", __func__, __LINE__, query);
+    if (query == NULL) {
+        return -1;
+    }
 
     ctx = db_client.execute(query);
     db_client.free_result(ctx);
+    sqlite3_free(query);
 
     return 0;
 }

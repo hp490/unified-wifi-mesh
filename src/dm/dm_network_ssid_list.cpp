@@ -117,7 +117,10 @@ int dm_network_ssid_list_t::set_config(db_client_t& db_client, dm_network_ssid_t
     
     //printf("%s:%d: Enter: Network SSID: %s\n", __func__, __LINE__, (char *)parent_id);
     
-    update_db(db_client, (op = get_dm_orch_type(net_ssid)), net_ssid.get_network_ssid_info());
+    int rc = update_db(db_client, (op = get_dm_orch_type(net_ssid)), net_ssid.get_network_ssid_info());
+    if (rc != 0) {
+        return rc;
+    }
     update_list(net_ssid, op);
     //printf("%s:%d: Exit: Network SSID: %s\n", __func__, __LINE__, (char *)parent_id);
     return 0;
